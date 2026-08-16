@@ -1,7 +1,6 @@
 #!/bin/sh
 # Post-merge: keep local environment in sync after `git pull` / `git merge`.
 # - Reinstall deps when the lockfile or package.json changed.
-# - Regenerate Prisma client when the schema changed.
 #
 # Skipped when the merge head can't be determined (e.g. unrelated histories).
 
