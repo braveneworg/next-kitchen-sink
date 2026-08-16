@@ -6,12 +6,18 @@ Deeper rules: [`src/app/AGENTS.md`](app/AGENTS.md) (UI, forms, styling),
 
 ## Architecture
 
+> The server-layer paths named below — `src/lib/actions/`,
+> `src/lib/validation/`, `src/app/api/`, `src/lib/query-keys.ts`,
+> `@/hooks/query-options` — do **not** ship with the template. They are where
+> this project expects that code to live; create each on first use. Everything
+> else in this guide describes code that is already here.
+
 - Server Components by default; `'use client'` only for interactive
   components. Client Components never call services, instead API routes.
   Server Actions for mutations, API routes for queries. Mark server-only
   modules with `'server-only'`.
 - Mutations → Server Actions (`src/lib/actions/`). Queries → API routes
-  (`src/app/api/`), REST conventions: plural nouns (`/api/releases`), correct
+  (`src/app/api/`), REST conventions: plural nouns (`/api/users`), correct
   verbs (GET read, POST create, PUT/PATCH update, DELETE remove).
 - Validate all external input (user input, API responses, Server Action args)
   with Zod (`src/lib/validation/`) before use.
@@ -27,10 +33,11 @@ Deeper rules: [`src/app/AGENTS.md`](app/AGENTS.md) (UI, forms, styling),
   jsdocs explaining behavior and return value.
 - `{ cache: 'no-store' }` only for never-cacheable requests (e.g. auth
   status); otherwise rely on TanStack Query caching/invalidation.
-- Each `useEntityQuery` hook takes a trailing, spread-last options override
-  (`QueryOptionsOverride` / `InfiniteQueryOptionsOverride` from
-  `@/hooks/query-options`) so call sites tune `enabled`/`staleTime`/etc. while
-  `queryKey`/`queryFn` (and infinite paging) stay locked.
+- Each `useEntityQuery` hook takes a trailing, spread-last options override so
+  call sites can tune `enabled`/`staleTime`/etc. while `queryKey`/`queryFn`
+  (and infinite paging) stay locked. Define the override types once — as
+  `QueryOptionsOverride` / `InfiniteQueryOptionsOverride` in
+  `@/hooks/query-options` — and reuse them across every query hook.
 
 ## TypeScript
 
