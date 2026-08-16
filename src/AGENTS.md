@@ -23,7 +23,7 @@ Deeper rules: [`src/app/AGENTS.md`](app/AGENTS.md) (UI, forms, styling),
 - TanStack Query with `fetch` to API routes, forwarding the `AbortSignal` for
   automatic cancellation. Stable keys from `src/lib/query-keys.ts`. Never call
   API routes directly from components — wrap each in a custom hook (e.g.
-  `useArtistsQuery`) that forwards the signal and abstracts the query, with
+  `useUsersQuery`) that forwards the signal and abstracts the query, with
   jsdocs explaining behavior and return value.
 - `{ cache: 'no-store' }` only for never-cacheable requests (e.g. auth
   status); otherwise rely on TanStack Query caching/invalidation.
@@ -68,7 +68,7 @@ Deeper rules: [`src/app/AGENTS.md`](app/AGENTS.md) (UI, forms, styling),
 - Deterministic and independent of network, time, and ordering. Remove
   orphaned tests when code is deleted, and orphaned code when tests are
   removed.
-- Target 90–95% coverage (exclude config, types, interfaces, Prisma schema);
+- Target 90–95% coverage (exclude config, types, interfaces, generated code);
   don't regress the `COVERAGE_METRICS.md` baseline.
 
 ## Naming

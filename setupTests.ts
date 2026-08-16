@@ -8,27 +8,10 @@ import { afterEach, vi } from 'vitest';
 // blocks without cleanup), keeping shuffled test order deterministic.
 const PRISTINE_ENV = { ...process.env };
 
-// Mock server-only module to allow testing server-side code
+// Stub `server-only` so lib modules that import it (see src/lib/AGENTS.md) are
+// testable. The factory form works whether or not the package is installed, so
+// this keeps working the moment someone adds `import 'server-only'`.
 vi.mock('server-only', () => ({}));
-
-// Auto-mock zustand via __mocks__/zustand.ts: every store created in a test
-// file registers a reset fn and the mock's own afterEach restores initial
-// state between tests, so module-level stores cannot leak state across tests.
-vi.mock('zustand');
-
-// Global safety-net mock for the Prisma client singleton. `src/lib/prisma.ts`
-// constructs `new PrismaClient()` at module load, and the generated library
-// engine initializes its native N-API addon eagerly. Loading that native engine
-// inside vitest's vmThreads VM context aborts the worker ("Failed to deserialize
-// constructor options" -> SIGABRT, exit 134) — this only bites in CI, where
-// `prisma generate` has produced a real client (locally the un-generated stub is
-// inert). Per project convention, unit tests mock Prisma at the service/repository
-// boundary; this is the global guard so no spec can ever reach the real engine.
-// Specs needing behavior supply their own `vi.mock('@/lib/prisma', ...)`, which
-// overrides this; `prisma.spec.ts` tests the real singleton via `vi.importActual`.
-vi.mock('@/lib/prisma', () => ({
-  prisma: new Proxy({}, { get: (_target, prop) => (prop === 'then' ? undefined : vi.fn()) }),
-}));
 
 // Pure stub for next/server — extends the native Node.js Request so route handlers get a
 // fully-functional headers/json()/text() API without loading any real Next.js module.
@@ -194,14 +177,13 @@ if (typeof window !== 'undefined') {
   // Mock scrollIntoView for JSDOM
   Element.prototype.scrollIntoView = vi.fn();
 
-  // Polyfill Range rect methods for jsdom. ProseMirror/Tiptap's coordsAtPos
-  // (reached via scrollToSelection when content is inserted) builds a Range and
-  // calls getClientRects()/getBoundingClientRect() on it, both of which jsdom
-  // leaves undefined. Without these the editor throws "target.getClientRects is
-  // not a function" asynchronously after a test finishes — a flaky unhandled
-  // exception that fails the whole vitest shard (see rich-text-editor.spec.tsx).
-  // Empty rects are correct here: jsdom has no layout, and singleRect() falls
-  // through to getBoundingClientRect() when getClientRects() is empty.
+  // Polyfill Range rect methods, which jsdom leaves undefined. Rich-text
+  // editors and any code doing selection math build a Range and call
+  // getClientRects()/getBoundingClientRect() on it; without these it throws
+  // "target.getClientRects is not a function", often asynchronously after the
+  // test has finished — an unhandled exception that fails the whole shard.
+  // Empty rects are correct here: jsdom has no layout, and callers typically
+  // fall through to getBoundingClientRect() when getClientRects() is empty.
   const emptyDomRect: DOMRect = {
     x: 0,
     y: 0,
@@ -289,8 +271,8 @@ if (typeof window !== 'undefined') {
 afterEach(() => {
   cleanupFn();
 
-  // Persisted zustand stores (and any direct storage writes) must not leak
-  // between tests. node-env specs have no window, hence the guard.
+  // Persisted client state (store middleware, direct storage writes) must not
+  // leak between tests. node-env specs have no window, hence the guard.
   if (typeof window !== 'undefined') {
     window.sessionStorage.clear();
     window.localStorage.clear();

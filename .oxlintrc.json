@@ -163,44 +163,6 @@
       "rules": { "import/no-anonymous-default-export": "off" }
     },
     {
-      "files": ["src/**/*.ts", "src/**/*.tsx"],
-      "rules": {
-        "no-restricted-imports": [
-          "error",
-          {
-            "paths": [
-              {
-                "name": "@prisma/client",
-                "message": "Prisma may only be imported in src/lib/repositories/**. Use hand-written domain types from @/lib/types/domain instead."
-              },
-              {
-                "name": "@prisma/client/runtime/library",
-                "message": "Prisma may only be imported in src/lib/repositories/**. Catch DataError from @/lib/types/domain/errors instead."
-              }
-            ],
-            "patterns": [
-              {
-                "group": ["@prisma/client", "@prisma/client/*"],
-                "message": "Prisma may only be imported in src/lib/repositories/**. Use @/lib/types/domain types and DataError instead."
-              }
-            ]
-          }
-        ]
-      }
-    },
-    {
-      "files": [
-        "src/lib/repositories/**",
-        "src/lib/prisma.ts",
-        "src/lib/prisma.spec.ts",
-        "src/lib/prisma-adapter.ts",
-        "src/lib/prisma-adapter.spec.ts",
-        "src/lib/utils/slow-query-extension.ts",
-        "src/lib/utils/slow-query-extension.spec.ts"
-      ],
-      "rules": { "no-restricted-imports": "off" }
-    },
-    {
       "files": ["**/components/**/*.tsx", "**/app/**/*.tsx", "**/*.component.tsx"],
       "rules": {
         "max-lines-per-function": ["error", { "max": 250, "skipBlankLines": true, "skipComments": true }]
@@ -219,20 +181,8 @@
       "rules": { "max-lines-per-function": "off" }
     },
     {
-      "files": ["src/lib/email/**/*.ts", "src/lib/email/**/*.tsx", "src/app/legal/**/*.tsx"],
-      "rules": { "max-lines-per-function": "off" }
-    },
-    {
-      "files": ["src/app/components/ui/chart.tsx", "bio-generator/src/musicbrainz.ts"],
+      "files": ["src/app/components/ui/chart.tsx"],
       "rules": { "max-params": "off" }
-    },
-    {
-      "files": [
-        "src/app/components/ui/bio-figure-node-view.tsx",
-        "src/app/global-error.tsx",
-        "src/app/components/forms/link-preview-card.tsx"
-      ],
-      "rules": { "nextjs/no-img-element": "off" }
     },
     {
       "files": [
@@ -302,15 +252,7 @@
       "rules": { "react/no-array-index-key": "off" }
     },
     {
-      "files": [
-        "scripts/**/*.ts",
-        "scripts/**/*.tsx",
-        "docs/**/*.js",
-        "docs/**/*.mjs",
-        "src/app/api/releases/*/upload/*/route.ts",
-        "src/lib/audio-metadata/ffmpeg.ts",
-        "bio-generator/src/template.spec.ts"
-      ],
+      "files": ["scripts/**/*.ts", "scripts/**/*.tsx", "docs/**/*.js", "docs/**/*.mjs"],
       "rules": { "security/detect-non-literal-fs-filename": "off" }
     },
     {

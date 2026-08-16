@@ -19,17 +19,15 @@ const require = createRequire(import.meta.url);
 const htmlReactParserCjs = require.resolve('html-react-parser/lib/index');
 const htmlDomParserClient = require.resolve('html-dom-parser/lib/client/html-to-dom');
 
-// Specs that import html-react-parser must run under the `forks` pool: the
-// default `vmThreads` pool ignores `server.deps.inline`, so the aliases above
-// can't redirect html-dom-parser to its DOM-friendly client build and the
-// CJS→ESM (`domhandler`) boundary crashes. Keep this list tight — every other
-// `.spec.tsx` stays on the faster `vmThreads` pool.
-const HTML_PARSER_SPECS = ['**/bio-html.spec.tsx', '**/rich-text-editor.spec.tsx'];
-
-// Specs that exercise REAL `sharp` (a libvips native addon) must run under the
-// `forks` pool: the default `vmThreads` pool cannot reliably load native
-// addons. Keep this list tight — every other `.spec.ts` stays on `vmThreads`.
-const NATIVE_ADDON_SPECS = ['**/image-quality.spec.ts', '**/thumbnail-data-uri.spec.ts'];
+// NOTE: a spec that imports html-react-parser needs its own `forks`-pool
+// project. The default `vmThreads` pool ignores `server.deps.inline`, so the
+// aliases above can't redirect html-dom-parser to its DOM-friendly client build
+// and the CJS→ESM (`domhandler`) boundary crashes. The same applies to any
+// native addon (`sharp` and friends), which vmThreads cannot reliably load.
+// Add a project alongside the two below, scoped tightly to those spec files:
+//
+//   { extends: true, test: { name: 'jsdom-forks', environment: 'happy-dom',
+//     pool: 'forks', include: ['**/my-parser.spec.tsx'] } }
 
 // https://vitejs.dev/config/
 export default defineConfig((): ViteUserConfig => {
@@ -68,10 +66,7 @@ export default defineConfig((): ViteUserConfig => {
             name: 'node',
             environment: 'node',
             include: ['**/*.spec.ts'],
-            // The Lambda projects are separate pnpm workspaces with their own
-            // vitest runners/configs; their specs exercise real default deps
-            // (e.g. live MusicBrainz fetches) and must not run under the app suite.
-            exclude: ['**/node_modules/**', 'bio-generator/**', 'stripe-webhook/**', ...NATIVE_ADDON_SPECS],
+            exclude: ['**/node_modules/**'],
           },
         },
         {
@@ -80,32 +75,7 @@ export default defineConfig((): ViteUserConfig => {
             name: 'jsdom',
             environment: 'happy-dom',
             include: ['**/*.spec.tsx'],
-            exclude: ['**/node_modules/**', 'bio-generator/**', 'stripe-webhook/**', ...HTML_PARSER_SPECS],
-          },
-        },
-        {
-          // html-react-parser specs need the `forks` pool so `server.deps.inline`
-          // (and thus the html-dom-parser client alias) takes effect. See the
-          // HTML_PARSER_SPECS note above.
-          extends: true,
-          test: {
-            name: 'jsdom-forks',
-            environment: 'happy-dom',
-            pool: 'forks',
-            include: HTML_PARSER_SPECS,
-            exclude: ['**/node_modules/**', 'bio-generator/**', 'stripe-webhook/**'],
-          },
-        },
-        {
-          // Real-`sharp` specs need the `forks` pool (native addon won't load
-          // under vmThreads). Node environment, no DOM. See NATIVE_ADDON_SPECS.
-          extends: true,
-          test: {
-            name: 'node-forks',
-            environment: 'node',
-            pool: 'forks',
-            include: NATIVE_ADDON_SPECS,
-            exclude: ['**/node_modules/**', 'bio-generator/**', 'stripe-webhook/**'],
+            exclude: ['**/node_modules/**'],
           },
         },
       ],
@@ -222,13 +192,8 @@ export default defineConfig((): ViteUserConfig => {
           '**/*.d.ts',
           '**/types/**',
 
-          // Prisma
-          '**/prisma/**',
-          '**/*.prisma',
-
           // Setup and tooling
           '**/setupTests.ts',
-          '**/auth.ts',
 
           // Build outputs and dependencies
           '**/node_modules/**',
@@ -253,11 +218,11 @@ export default defineConfig((): ViteUserConfig => {
           // Test utilities - not production code
           '**/test-utils/**',
 
-          // Pure barrel/re-export files with no logic
-          '**/components/forms/fields/index.ts',
-
-          // shadcn/ui primitives that wrap Radix UI with no custom logic
-          // These components only add styling/className and delegate all behavior to Radix
+          // shadcn/ui primitives that wrap Base UI with no custom logic.
+          // These only add styling/className and delegate all behaviour to the
+          // underlying primitive, so unit tests would assert on class strings.
+          // Anything here with real logic of its own should be removed from the
+          // list and tested.
           '**/components/ui/context-menu.tsx',
           '**/components/ui/menubar.tsx',
           '**/components/ui/calendar.tsx',
@@ -265,51 +230,7 @@ export default defineConfig((): ViteUserConfig => {
           '**/components/ui/scroll-area.tsx',
           '**/components/ui/select.tsx',
           '**/components/ui/sidebar.tsx',
-          '**/components/ui/form.tsx',
           '**/components/ui/chart.tsx',
-          // TODO: add E2E tests for these components using playwright
-          // Complex UI components with interactive state requiring E2E tests
-          '**/components/ui/datepicker.tsx',
-          '**/components/ui/media-uploader.tsx',
-          '**/components/ui/image-uploader.tsx',
-          '**/components/ui/resizable-text-box.tsx',
-          '**/**/media-uploader.tsx',
-          '**/**/image-uploader.tsx',
-          '**/components/forms/artist-form.tsx',
-          '**/components/forms/featured-artist-form.tsx',
-          '**/components/forms/release-form.tsx',
-          '**/components/forms/bulk-track-uploader.tsx',
-          '**/components/forms/fields/cover-art-field.tsx',
-          '**/admin/data-views/data-view.tsx',
-          // TODO: add E2E tests for these components using playwright
-          // Media player with Video.js integration - requires E2E testing
-          '**/components/ui/audio/media-player/**',
-          '**/components/ui/playlist-player.tsx',
-          '**/components/ui/audio/carousel-number-up.tsx',
-          // Dynamically-imported video.js surface wrapper (next/dynamic, ssr:false)
-          // that unit tests mock away — requires E2E testing.
-          '**/components/ui/video/lazy-video-surface.tsx',
-
-          // TODO: add S3 integration testing with upload utility
-          // Direct upload utility requires S3 integration testing
-          '**/lib/utils/direct-upload.ts',
-
-          // Presigned upload requires S3 credentials
-          '**/lib/actions/presigned-upload-actions.ts',
-
-          // Image actions that require S3 integration testing
-          '**/lib/actions/artist-image-actions.ts',
-          '**/lib/actions/group-image-actions.ts',
-          '**/lib/actions/register-image-actions.ts',
-
-          // Simple wrapper actions with no logic beyond calling services (untested)
-          '**/lib/actions/artist-actions.ts',
-          '**/lib/actions/create-featured-artist-action.ts',
-          '**/lib/actions/create-group-action.ts',
-          '**/lib/actions/update-group-action.ts',
-
-          // Prisma client singleton - initialization code with environment branching
-          '**/lib/prisma.ts',
 
           // CSS files
           '**/*.css',
@@ -325,6 +246,7 @@ export default defineConfig((): ViteUserConfig => {
         '**/setupTests.ts',
         '**/e2e/**',
         '**/.claude/**',
+        '**/.git/**',
       ],
     },
 
@@ -336,23 +258,13 @@ export default defineConfig((): ViteUserConfig => {
         { find: '@/lib', replacement: path.resolve(process.cwd(), './src/lib') },
         { find: '@/ui', replacement: path.resolve(process.cwd(), './src/app/components/ui') },
         { find: '@/hooks', replacement: path.resolve(process.cwd(), './src/hooks') },
-        { find: '@/utils', replacement: path.resolve(process.cwd(), './src/lib/utils') },
-        { find: '@/test-utils', replacement: path.resolve(process.cwd(), './src/test-utils') },
-        { find: '@/auth', replacement: path.resolve(process.cwd(), './auth.ts') },
         { find: '@', replacement: path.resolve(process.cwd(), './src') },
-        // Keep only next/server alias - let vi.mock handle next/navigation
-        {
-          find: 'next/server',
-          replacement: path.resolve(process.cwd(), './__mocks__/next/server.js'),
-        },
       ],
       conditions: ['import', 'module', 'browser', 'default'],
       extensions: ['.mjs', '.js', '.mts', '.ts', '.jsx', '.tsx', '.json'],
     },
     define: {
       'process.env.NODE_ENV': JSON.stringify('test'),
-      'process.env.AUTH_SECRET': JSON.stringify('test-secret-key-for-testing-purposes-only'),
-      'process.env.AUTH_URL': JSON.stringify('http://localhost:3000'),
     },
   };
 });
