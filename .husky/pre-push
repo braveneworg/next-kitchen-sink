@@ -233,9 +233,7 @@ echo "🔍 Running TypeScript type-check before push..."
 stage="TypeScript type-check (pnpm exec tsc --noEmit)"
 
 # Run TypeScript type-check on the entire project
-pnpm exec tsc --noEmit
-
-if [ $? -ne 0 ]; then
+if ! pnpm exec tsc --noEmit; then
   echo ""
   echo "❌ TypeScript type-check failed. Please fix type errors before pushing."
   echo "   Run 'pnpm exec tsc --noEmit' to see all errors."
@@ -248,9 +246,7 @@ echo ""
 echo "🔎 Running oxlint before push..."
 stage="oxlint (pnpm run lint)"
 
-pnpm run lint
-
-if [ $? -ne 0 ]; then
+if ! pnpm run lint; then
   echo ""
   echo "❌ oxlint found errors or warnings. Please fix them before pushing."
   echo "   Run 'pnpm run lint' to see all issues."
@@ -263,9 +259,7 @@ echo ""
 echo "🎨 Running Prettier format check before push..."
 stage="Prettier format check (pnpm run format:check)"
 
-pnpm run format:check
-
-if [ $? -ne 0 ]; then
+if ! pnpm run format:check; then
   echo ""
   echo "❌ Prettier found unformatted files. Please run 'pnpm run format' before pushing."
   echo "   Run 'pnpm run format:check' to see all issues."
@@ -279,9 +273,7 @@ echo "🧪 Running tests before push..."
 stage="tests + coverage (pnpm run test:coverage:check)"
 
 # Suppress console output during tests to reduce verbosity
-pnpm run test:coverage:check --reporter=dot --silent
-
-if [ $? -ne 0 ]; then
+if ! pnpm run test:coverage:check --reporter=dot --silent; then
   echo ""
   echo "❌ Tests failed. Please fix failing tests before pushing."
   echo "   Run 'pnpm run test' to see all failures."

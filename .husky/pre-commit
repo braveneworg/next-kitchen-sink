@@ -1,5 +1,13 @@
 #!/bin/sh
 
+# husky invokes hooks as `sh -e` (see .husky/_/h), so any command that exits
+# non-zero outside a condition aborts the script immediately. Stated explicitly
+# here so the behaviour is visible in this file and a direct `sh .husky/pre-commit`
+# matches how husky runs it. Consequence to remember when editing: a bare
+# `some-command` followed by `if [ $? -ne 0 ]` is unreachable — the script is
+# already gone. Wrap fallible commands in `if ! some-command; then` instead.
+set -e
+
 # `git branch --show-current` rather than `git rev-parse --abbrev-ref HEAD`:
 # husky runs hooks with `sh -e` (see .husky/_/h), and rev-parse exits 128 on an
 # unborn branch — no HEAD yet — which aborted the hook before any check ran and
@@ -41,9 +49,7 @@ fi
 
 # Linting staged files
 echo "🔍 Running lint-staged..."
-pnpm exec lint-staged
-
-if [ $? -ne 0 ]; then
+if ! pnpm exec lint-staged; then
   echo "❌ Linting or compilation failed. Please fix errors before committing."
   exit 1
 fi
@@ -60,13 +66,13 @@ if [ -n "$CHANGED_FILES" ]; then
   # 128), which would make the initial commit impossible. Run the whole suite
   # in that case — every file is new anyway.
   if git rev-parse --verify --quiet HEAD >/dev/null 2>&1; then
-    pnpm exec vitest run --changed HEAD
+    vitest_scope="--changed HEAD"
   else
     echo "ℹ️  No HEAD yet (initial commit) — running the full suite."
-    pnpm exec vitest run
+    vitest_scope=""
   fi
-  TEST_STATUS=$?
-  if [ $TEST_STATUS -ne 0 ]; then
+  # Unquoted on purpose: $vitest_scope must word-split into two arguments.
+  if ! pnpm exec vitest run $vitest_scope; then
     echo "❌ Tests failed. Please fix failing tests before committing."
     exit 1
   fi
