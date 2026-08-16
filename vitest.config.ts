@@ -1,0 +1,358 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
+
+import { createRequire } from 'node:module';
+import * as path from 'node:path';
+
+import { defineConfig, type ViteUserConfig } from 'vitest/config';
+
+import packageJson from './package.json' with { type: 'json' };
+
+// html-react-parser is hard to load under Vitest: its ESM entry is loaded
+// natively by Node (so `server.deps.inline` never applies), and its server
+// build of html-dom-parser require()s ESM-only `domhandler` and crashes. We
+// force the CJS entry (so Vite inlines+transforms it, routing every require
+// through Vite) and alias html-dom-parser to its DOMParser-based client build,
+// which a browser-like DOM environment (happy-dom) satisfies without domhandler.
+const require = createRequire(import.meta.url);
+const htmlReactParserCjs = require.resolve('html-react-parser/lib/index');
+const htmlDomParserClient = require.resolve('html-dom-parser/lib/client/html-to-dom');
+
+// Specs that import html-react-parser must run under the `forks` pool: the
+// default `vmThreads` pool ignores `server.deps.inline`, so the aliases above
+// can't redirect html-dom-parser to its DOM-friendly client build and the
+// CJS→ESM (`domhandler`) boundary crashes. Keep this list tight — every other
+// `.spec.tsx` stays on the faster `vmThreads` pool.
+const HTML_PARSER_SPECS = ['**/bio-html.spec.tsx', '**/rich-text-editor.spec.tsx'];
+
+// Specs that exercise REAL `sharp` (a libvips native addon) must run under the
+// `forks` pool: the default `vmThreads` pool cannot reliably load native
+// addons. Keep this list tight — every other `.spec.ts` stays on `vmThreads`.
+const NATIVE_ADDON_SPECS = ['**/image-quality.spec.ts', '**/thumbnail-data-uri.spec.ts'];
+
+// https://vitejs.dev/config/
+export default defineConfig((): ViteUserConfig => {
+  const withCoverage = process.argv.includes('--coverage');
+
+  return {
+    server: {
+      open: true,
+    },
+
+    // Cache directory for faster subsequent builds
+    cacheDir: 'node_modules/.vite',
+
+    // Optimize build for faster test startup. Vite 8 / Vitest 4 transform with
+    // oxc, not esbuild — an `esbuild` block here is silently ignored ("Both
+    // esbuild and oxc options were set…"). Keep the target in sync with
+    // tsconfig's `target`.
+    oxc: {
+      target: 'es2024',
+    },
+
+    test: {
+      root: import.meta.dirname,
+      silent: withCoverage ? false : 'passed-only', // Silence test output when not collecting coverage
+      name: packageJson.name,
+      environment: 'jsdom',
+      // Use Vitest 4 workspace projects to split .spec.ts (node) and .spec.tsx
+      // (happy-dom). Pure TypeScript spec files run in the lightweight Node
+      // environment; skipping DOM init saves 1–3s wall clock. The .spec.ts files
+      // that DO need DOM opt back in via a `// @vitest-environment jsdom` comment
+      // at the top (jsdom is retained for those explicit opt-ins).
+      projects: [
+        {
+          extends: true,
+          test: {
+            name: 'node',
+            environment: 'node',
+            include: ['**/*.spec.ts'],
+            // The Lambda projects are separate pnpm workspaces with their own
+            // vitest runners/configs; their specs exercise real default deps
+            // (e.g. live MusicBrainz fetches) and must not run under the app suite.
+            exclude: ['**/node_modules/**', 'bio-generator/**', 'stripe-webhook/**', ...NATIVE_ADDON_SPECS],
+          },
+        },
+        {
+          extends: true,
+          test: {
+            name: 'jsdom',
+            environment: 'happy-dom',
+            include: ['**/*.spec.tsx'],
+            exclude: ['**/node_modules/**', 'bio-generator/**', 'stripe-webhook/**', ...HTML_PARSER_SPECS],
+          },
+        },
+        {
+          // html-react-parser specs need the `forks` pool so `server.deps.inline`
+          // (and thus the html-dom-parser client alias) takes effect. See the
+          // HTML_PARSER_SPECS note above.
+          extends: true,
+          test: {
+            name: 'jsdom-forks',
+            environment: 'happy-dom',
+            pool: 'forks',
+            include: HTML_PARSER_SPECS,
+            exclude: ['**/node_modules/**', 'bio-generator/**', 'stripe-webhook/**'],
+          },
+        },
+        {
+          // Real-`sharp` specs need the `forks` pool (native addon won't load
+          // under vmThreads). Node environment, no DOM. See NATIVE_ADDON_SPECS.
+          extends: true,
+          test: {
+            name: 'node-forks',
+            environment: 'node',
+            pool: 'forks',
+            include: NATIVE_ADDON_SPECS,
+            exclude: ['**/node_modules/**', 'bio-generator/**', 'stripe-webhook/**'],
+          },
+        },
+      ],
+
+      // Inline the html-react-parser CJS chain so Vite transforms every
+      // `require()` through its resolver (applying the aliases below and
+      // handling the ESM-only `domhandler`). See the alias note at the top.
+      server: {
+        deps: {
+          inline: [/html-react-parser/, /html-dom-parser/, /domhandler/],
+        },
+      },
+
+      // Performance optimizations
+      css: false, // Don't process CSS in tests
+      // vmThreads is ~3x faster than forks: thread startup is cheap, VM contexts
+      // provide per-file isolation identical to forks without subprocess overhead.
+      pool: 'vmThreads',
+
+      // Use most cores, but leave headroom. Saturating every core (`'100%'`)
+      // invites resource contention — workers spinning up simultaneously under
+      // memory pressure can produce rare, non-deterministic VM-context failures
+      // that pass on retry. On Apple Silicon it is also measurably SLOWER: a
+      // maxWorkers sweep showed wall clock rising monotonically past ~10 workers
+      // (9→21.4s, 10→21.7s, 14→22.5s) as work spilled onto efficiency cores.
+      // `'75%'` (~10 workers on a 14-core box) keeps throughput at its peak while
+      // reducing the flakiness risk.
+      maxWorkers: '75%',
+
+      isolate: true, // Required for test isolation
+      fileParallelism: true, // Run test files in parallel for speed
+      testTimeout: 5000,
+
+      // Randomize test order to catch hidden dependencies, but ONLY within each
+      // file (`tests: true`). File order stays UNSHUFFLED (`files: false`) so
+      // Vitest's sequencer can schedule the slowest specs first and balance them
+      // across workers — shuffling file order piles slow specs onto one worker at
+      // the tail and nearly doubles wall clock (measured 23s → 13s here).
+      // Use fixed seed for reproducibility, override with VITEST_SEED env var.
+      sequence: {
+        shuffle: { files: false, tests: true },
+        seed: (() => {
+          if (process.env.VITEST_SEED) {
+            const parsed = parseInt(process.env.VITEST_SEED, 10);
+            return Number.isNaN(parsed) || parsed <= 0 ? 42 : parsed;
+          }
+          return 42;
+        })(),
+      },
+
+      // Disable typecheck by default for faster runs
+      typecheck: {
+        enabled: false,
+      },
+
+      // Fail fast on first error in CI for faster feedback
+      bail: process.env.CI ? 1 : 0,
+
+      globals: true,
+      watch: false,
+      setupFiles: ['./setupTests.ts'],
+      // Auto-clear mock call history after every test — equivalent to calling
+      // vi.clearAllMocks() in afterEach but eliminates the hook call overhead.
+      clearMocks: true,
+
+      // Optimize dependency pre-bundling
+      deps: {
+        optimizer: {
+          web: {
+            include: [
+              '@testing-library/react',
+              '@testing-library/jest-dom',
+              '@testing-library/user-event',
+              'react',
+              'react-dom',
+            ],
+          },
+        },
+        // Inline small dependencies for faster loading
+        interopDefault: true,
+      },
+
+      // Reporter optimizations
+      reporters: process.env.CI ? ['default', 'junit'] : ['default'],
+      outputFile: process.env.CI ? { junit: './test-results.xml' } : undefined,
+
+      coverage: {
+        provider: 'v8',
+        thresholds: {
+          lines: 95,
+          functions: 95,
+          branches: 95,
+          statements: 95,
+        },
+        // In CI, only generate the reporters consumed downstream
+        // (json-summary for coverage action + regression check, json for PR diff, text for log).
+        // html/lcov/clover are large and unused in CI, and write significant disk I/O.
+        reporter: process.env.CI ? ['text', 'json', 'json-summary'] : ['text', 'json', 'json-summary', 'html'],
+        // Coverage is gathered exclusively from `.ts`/`.tsx` first-party source.
+        // Plain `.js`/`.jsx`/`.cjs`/`.mjs`/`.json` files are tooling, generated
+        // output, or third-party shims — explicitly drop them so they cannot
+        // inflate or deflate the headline metrics.
+        exclude: [
+          '**/*.{js,jsx,cjs,mjs,json}',
+          '**/*.css',
+          // Configuration files
+          '**/*.config.{ts,js,mjs,cjs}',
+          '**/vitest.config.ts',
+          '**/next.config.ts',
+          '**/postcss.config.mjs',
+          '**/tsconfig*.json',
+
+          // Type declarations and interfaces
+          '**/*.d.ts',
+          '**/types/**',
+
+          // Prisma
+          '**/prisma/**',
+          '**/*.prisma',
+
+          // Setup and tooling
+          '**/setupTests.ts',
+          '**/auth.ts',
+
+          // Build outputs and dependencies
+          '**/node_modules/**',
+          '**/dist/**',
+          '**/build/**',
+          '**/.next/**',
+          '**/coverage/**',
+
+          // Test files themselves
+          '**/*.{test,spec}.{ts,tsx,js,jsx}',
+
+          // Root layout — module-level code (env validation, HTTPS warning)
+          // is not testable in jsdom/node environments
+          '**/app/layout.tsx',
+
+          // Scripts and utilities that don't need testing
+          '**/scripts/**',
+
+          // Mocks directory
+          '**/__mocks__/**',
+
+          // Test utilities - not production code
+          '**/test-utils/**',
+
+          // Pure barrel/re-export files with no logic
+          '**/components/forms/fields/index.ts',
+
+          // shadcn/ui primitives that wrap Radix UI with no custom logic
+          // These components only add styling/className and delegate all behavior to Radix
+          '**/components/ui/context-menu.tsx',
+          '**/components/ui/menubar.tsx',
+          '**/components/ui/calendar.tsx',
+          '**/components/ui/carousel.tsx',
+          '**/components/ui/scroll-area.tsx',
+          '**/components/ui/select.tsx',
+          '**/components/ui/sidebar.tsx',
+          '**/components/ui/form.tsx',
+          '**/components/ui/chart.tsx',
+          // TODO: add E2E tests for these components using playwright
+          // Complex UI components with interactive state requiring E2E tests
+          '**/components/ui/datepicker.tsx',
+          '**/components/ui/media-uploader.tsx',
+          '**/components/ui/image-uploader.tsx',
+          '**/components/ui/resizable-text-box.tsx',
+          '**/**/media-uploader.tsx',
+          '**/**/image-uploader.tsx',
+          '**/components/forms/artist-form.tsx',
+          '**/components/forms/featured-artist-form.tsx',
+          '**/components/forms/release-form.tsx',
+          '**/components/forms/bulk-track-uploader.tsx',
+          '**/components/forms/fields/cover-art-field.tsx',
+          '**/admin/data-views/data-view.tsx',
+          // TODO: add E2E tests for these components using playwright
+          // Media player with Video.js integration - requires E2E testing
+          '**/components/ui/audio/media-player/**',
+          '**/components/ui/playlist-player.tsx',
+          '**/components/ui/audio/carousel-number-up.tsx',
+          // Dynamically-imported video.js surface wrapper (next/dynamic, ssr:false)
+          // that unit tests mock away — requires E2E testing.
+          '**/components/ui/video/lazy-video-surface.tsx',
+
+          // TODO: add S3 integration testing with upload utility
+          // Direct upload utility requires S3 integration testing
+          '**/lib/utils/direct-upload.ts',
+
+          // Presigned upload requires S3 credentials
+          '**/lib/actions/presigned-upload-actions.ts',
+
+          // Image actions that require S3 integration testing
+          '**/lib/actions/artist-image-actions.ts',
+          '**/lib/actions/group-image-actions.ts',
+          '**/lib/actions/register-image-actions.ts',
+
+          // Simple wrapper actions with no logic beyond calling services (untested)
+          '**/lib/actions/artist-actions.ts',
+          '**/lib/actions/create-featured-artist-action.ts',
+          '**/lib/actions/create-group-action.ts',
+          '**/lib/actions/update-group-action.ts',
+
+          // Prisma client singleton - initialization code with environment branching
+          '**/lib/prisma.ts',
+
+          // CSS files
+          '**/*.css',
+        ],
+      },
+
+      exclude: [
+        '**/node_modules/**',
+        '**/dist/**',
+        '**/.next/**',
+        '**/coverage/**',
+        '**/*.config.{ts,js,mjs,cjs}',
+        '**/setupTests.ts',
+        '**/e2e/**',
+        '**/.claude/**',
+      ],
+    },
+
+    resolve: {
+      alias: [
+        { find: /^html-react-parser$/, replacement: htmlReactParserCjs },
+        { find: /^html-dom-parser$/, replacement: htmlDomParserClient },
+        { find: '@/components', replacement: path.resolve(process.cwd(), './src/app/components') },
+        { find: '@/lib', replacement: path.resolve(process.cwd(), './src/lib') },
+        { find: '@/ui', replacement: path.resolve(process.cwd(), './src/app/components/ui') },
+        { find: '@/hooks', replacement: path.resolve(process.cwd(), './src/hooks') },
+        { find: '@/utils', replacement: path.resolve(process.cwd(), './src/lib/utils') },
+        { find: '@/test-utils', replacement: path.resolve(process.cwd(), './src/test-utils') },
+        { find: '@/auth', replacement: path.resolve(process.cwd(), './auth.ts') },
+        { find: '@', replacement: path.resolve(process.cwd(), './src') },
+        // Keep only next/server alias - let vi.mock handle next/navigation
+        {
+          find: 'next/server',
+          replacement: path.resolve(process.cwd(), './__mocks__/next/server.js'),
+        },
+      ],
+      conditions: ['import', 'module', 'browser', 'default'],
+      extensions: ['.mjs', '.js', '.mts', '.ts', '.jsx', '.tsx', '.json'],
+    },
+    define: {
+      'process.env.NODE_ENV': JSON.stringify('test'),
+      'process.env.AUTH_SECRET': JSON.stringify('test-secret-key-for-testing-purposes-only'),
+      'process.env.AUTH_URL': JSON.stringify('http://localhost:3000'),
+    },
+  };
+});

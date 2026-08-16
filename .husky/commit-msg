@@ -1,0 +1,15 @@
+#!/bin/sh
+# Validate commit messages against Conventional Commits + length rules.
+# Config: commitlint.config.js
+# Skips merge/revert/fixup/squash/amend commits (Git generates these).
+
+COMMIT_MSG_FILE="$1"
+FIRST_LINE=$(sed -n '1p' "$COMMIT_MSG_FILE")
+
+case "$FIRST_LINE" in
+  "Merge "*|"Revert "*|"fixup! "*|"squash! "*|"amend! "*)
+    exit 0
+    ;;
+esac
+
+pnpm exec commitlint --edit "$COMMIT_MSG_FILE"

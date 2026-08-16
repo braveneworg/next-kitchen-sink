@@ -1,0 +1,78 @@
+#!/bin/sh
+
+# `git branch --show-current` rather than `git rev-parse --abbrev-ref HEAD`:
+# husky runs hooks with `sh -e` (see .husky/_/h), and rev-parse exits 128 on an
+# unborn branch — no HEAD yet — which aborted the hook before any check ran and
+# made the very first commit of a repository impossible. --show-current exits 0
+# and prints the branch name even when no commit exists.
+branch_name=$(git branch --show-current)
+if [ "$branch_name" = "main" ] || [ "$branch_name" = "master" ]; then
+  echo "🚫 You are on the '$branch_name' branch. Commits to this branch are not allowed."
+  echo "⏪ Staged changes are being reset to prevent accidental commits. Please switch to a feature branch and commit your changes there."
+  git reset
+  exit 1
+fi
+
+# if amending a commit, skip pre-commit checks to allow fixing up commits without running checks again
+if [ "$1" = "--amend" ]; then
+  echo "🔄 Amending commit, skipping pre-commit checks..."
+  exit 0
+fi
+
+if [ -z "$(git diff --cached --name-only)" ]; then
+  echo "🚫 No staged changes to commit. Please stage your changes before committing."
+  exit 1
+fi
+
+# Secret scanning (catches AWS keys, JWTs, .env values, private keys, etc.)
+# Install once: `brew install gitleaks` (or see https://github.com/gitleaks/gitleaks)
+echo "🔐 Scanning staged changes for secrets..."
+if command -v gitleaks >/dev/null 2>&1; then
+  if ! gitleaks protect --staged --redact --no-banner; then
+    echo "❌ gitleaks detected secrets in staged changes. Remove them before committing."
+    echo "   If this is a false positive, see https://github.com/gitleaks/gitleaks#configuration"
+    exit 1
+  fi
+  echo "✅ No secrets detected"
+else
+  echo "⚠️  gitleaks not installed — secret scanning skipped."
+  echo "   Install with: brew install gitleaks  (or see https://github.com/gitleaks/gitleaks)"
+fi
+
+# Linting staged files
+echo "🔍 Running lint-staged..."
+pnpm exec lint-staged
+
+if [ $? -ne 0 ]; then
+  echo "❌ Linting or compilation failed. Please fix errors before committing."
+  exit 1
+fi
+
+echo "✅ Linting staged files passed"
+echo "✅ Type check of staged files passed"
+
+# Run tests related to changed files
+echo "🧪 Running tests for changed files..."
+CHANGED_FILES=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '\.(ts|tsx)$' | grep -v '\.spec\.' | grep -v '\.test\.' | tr '\n' ' ')
+if [ -n "$CHANGED_FILES" ]; then
+  # `--changed HEAD` needs a commit to diff against. On the very first commit
+  # there is no HEAD and vitest aborts with "ambiguous argument 'HEAD'" (exit
+  # 128), which would make the initial commit impossible. Run the whole suite
+  # in that case — every file is new anyway.
+  if git rev-parse --verify --quiet HEAD >/dev/null 2>&1; then
+    pnpm exec vitest run --changed HEAD
+  else
+    echo "ℹ️  No HEAD yet (initial commit) — running the full suite."
+    pnpm exec vitest run
+  fi
+  TEST_STATUS=$?
+  if [ $TEST_STATUS -ne 0 ]; then
+    echo "❌ Tests failed. Please fix failing tests before committing."
+    exit 1
+  fi
+  echo "✅ Related tests passed for changed files"
+else
+  echo "ℹ️  No source files changed, skipping tests"
+fi
+
+echo "🎉 Pre-commit checks complete!"
