@@ -46,25 +46,41 @@ itself.
 
 ## The rule
 
-A push where **every** ref is being created — git reports an all-zero remote sha
-for each on the hook's stdin — is a seeding push. There is no shared history to
-protect and nothing to be behind, so:
+The bootstrap case is two different questions, and they take different answers.
 
-- branch protection allows it even from `main`/`master`;
-- a missing `$sync_ref` sets `no_baseline=1` instead of failing;
-- the up-to-date check is skipped, and the full gate runs in place of the
-  "no `.ts`/`.tsx` changed" shortcut, which would otherwise wave everything
-  through because there is nothing to diff against.
+**"May I push to main?"** — a permission, so the bar is high. The exception
+applies only when the remote has **no refs at all**: `git ls-remote <remote>`
+answers, and prints nothing. A missing `main` is deliberately not enough. If it
+were, deleting `main` on the forge would re-open direct pushes to it forever
+after, which is the opposite of what the check exists for.
 
-The all-zero remote sha is the load-bearing signal — it comes from git's own
-push negotiation, costs no network round trip, and cannot be spoofed by local
-state. When stdin carries no ref lines (the hook run by hand) the seeding case
-cannot be distinguished, so the strict path stands.
+Getting there needs both signals, and the order is the point:
+
+1. Every ref in the push is being created — git reports an all-zero remote sha
+   for each on the hook's stdin. Free, straight from git's own push
+   negotiation, and it short-circuits the common case so an ordinary accidental
+   push to `main` never pays for a network round trip. But it cannot tell an
+   unseeded repository from a deleted branch, so on its own it proves nothing.
+2. The remote itself is empty. Costs a round trip, so it runs only after (1)
+   has already narrowed things down.
+
+A remote that cannot be **reached** must never read as one that is empty —
+otherwise a network blip unlocks `main`. `remote_ref_state()` returns a distinct
+code for unreachable and the hook fails on it. Likewise, when stdin carries no
+ref lines (the hook run by hand) nothing can be told apart, so the strict path
+stands.
+
+**"What do I compare against?"** — not a permission, so a missing `$sync_ref` is
+simply the absence of an answer, whether or not the remote holds other refs. It
+sets `no_baseline=1`, which skips the up-to-date check and runs the full gate in
+place of the "no `.ts`/`.tsx` changed" shortcut — that shortcut would otherwise
+wave every file through, since there is nothing to diff against.
 
 `scripts/pre-push-hook.spec.ts` pins all of this against real bare repositories.
 The tests that matter most are the negative ones: an existing remote `main` is
-still protected, and an unreachable remote still fails rather than being mistaken
-for an unseeded one.
+still protected, a `main` deleted from a remote that still has refs does not
+re-open the exception, and an unreachable remote fails rather than passing for
+an unseeded one.
 
 ## Generalisation
 

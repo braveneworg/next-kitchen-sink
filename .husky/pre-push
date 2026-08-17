@@ -12,6 +12,13 @@ log_file="${TMPDIR:-/tmp}/husky-pre-push.log"
 # before the full log is read. Updated as the hook progresses.
 stage="startup"
 
+# git invokes this hook as `pre-push <remote-name> <remote-url>` and husky
+# forwards both (`sh -e "$s" "$@"` in .husky/_/h), so $1 is the remote actually
+# being pushed to — which is not always "origin". Captured here, at the top,
+# because the functions defined below rebind $1 to their own arguments. Falls
+# back to origin when the hook is run by hand with no arguments.
+push_remote="${1:-origin}"
+
 # Capture pre-push stdin (git sends "<local ref> <local sha> <remote ref>
 # <remote sha>" lines) so we can both (a) keep child processes from inheriting
 # it and (b) detect a deliberate non-fast-forward (force / --force-with-lease)
@@ -44,10 +51,12 @@ fi
 
 # Every ref in this push is being CREATED on the remote (git reported an
 # all-zero remote sha for each), so nothing that already exists there is being
-# touched. That is a seeding push — a brand-new repository, or a branch the
-# remote has never had. There is no shared history to protect and nothing to be
-# behind. With no ref lines on stdin (the hook run by hand) it cannot be told
-# apart from an ordinary push, so the stricter path stands.
+# touched. This is a necessary condition for a seeding push, not a sufficient
+# one — a deleted branch looks identical from here — so branch protection pairs
+# it with an inspection of the remote below. Its value is being free: it comes
+# from git's own push negotiation and short-circuits the network check for
+# ordinary pushes. With no ref lines on stdin (the hook run by hand) nothing can
+# be told apart, so the stricter path stands.
 seeding_push=0
 if [ "$pushed_refs" -gt 0 ] && [ "$updates_existing_ref" = "0" ]; then
   seeding_push=1
@@ -111,14 +120,50 @@ trap cleanup EXIT INT TERM
 echo ""
 echo "===== pre-push hook started at $(date) ====="
 
-# Prevent pushing directly to main or master branches. The one exception is a
-# seeding push: if the remote does not have the branch yet, refusing would leave
-# a fresh repository with no legal first push at all.
+# Reports what "<remote>" holds. Exit codes: 0 the remote answered and has NO
+# refs at all, 1 it has at least one, 2 it could not be reached. `git ls-remote`
+# prints one line per ref, so empty output with a zero status is an unseeded
+# repository — and only that, which is why a reachability failure gets its own
+# code rather than being folded in as "looks empty".
+remote_ref_state() {
+  if ! remote_refs=$(git ls-remote "$1" 2>/dev/null); then
+    return 2
+  fi
+  [ -z "$remote_refs" ] && return 0
+  return 1
+}
+
+# Prevent pushing directly to main or master branches. The one exception is
+# seeding an *entirely unseeded* remote, which would otherwise have no legal
+# first push at all: refusing every push from main, while every other branch is
+# measured against an origin/main that does not exist yet, is a deadlock.
+#
+# "This branch is missing from the remote" is deliberately NOT enough — deleting
+# main on the forge would re-open direct pushes to it forever after. The all-zero
+# remote sha on stdin cannot tell an unseeded repository from a deleted branch,
+# so the remote itself is inspected. That check is gated behind $seeding_push
+# (which is free) so an ordinary accidental push to main is still rejected
+# without paying for a network round trip.
 stage="branch protection"
 branch_name=$(git rev-parse --abbrev-ref HEAD)
 if [ "$branch_name" = "main" ] || [ "$branch_name" = "master" ]; then
+  seeding_allowed=0
   if [ "$seeding_push" = "1" ]; then
-    echo "🌱 '$branch_name' does not exist on the remote yet — allowing this push to seed it."
+    remote_ref_state "$push_remote"
+    case $? in
+      0) seeding_allowed=1 ;;
+      2)
+        # Never let an unreachable remote read as an unseeded one — that would
+        # turn a network blip into an unlocked main.
+        echo "❌ Could not reach '$push_remote' to check whether it is unseeded."
+        echo "   Please check your network connection and try again."
+        exit 1
+        ;;
+    esac
+  fi
+
+  if [ "$seeding_allowed" = "1" ]; then
+    echo "🌱 '$push_remote' has no refs at all — allowing this push to seed it."
   else
     echo "🚫 You are on the '$branch_name' branch. Pushing directly to this branch is not allowed."
     exit 1
