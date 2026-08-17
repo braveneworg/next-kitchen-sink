@@ -60,9 +60,10 @@ Excluded, with reasons:
 - **Tolerance:** a drop of up to **2%** on any metric is permitted.
 - **Floor:** the result must still sit above the 95% threshold.
 
-Both conditions apply, so the stricter one governs. With the baseline at 100%, the
-2% tolerance binds first and the effective floor is **98%** — tighten the baseline
-and the tolerance moves with it.
+Both conditions apply, so whichever binds first governs — the effective floor is
+`max(baseline - 2, 95)`, and it moves with the baseline. At a baseline of 100% the
+tolerance binds and the floor is **98%**; at a baseline of 96% the 95% threshold
+binds instead.
 
 - ✅ 100% → 98.5% (within tolerance, above threshold)
 - ❌ 100% → 97.5% (exceeds the 2% tolerance)
