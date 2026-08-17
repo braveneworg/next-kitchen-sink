@@ -17,7 +17,8 @@
  * sibling to the `typescript` package — a path that does not exist under pnpm's
  * isolated store. The spawn failed with ENOENT, `status` came back `null`, and
  * `process.exit(null)` exited 0, so the staged type check silently passed on
- * everything. See docs/lessons/tooling/tsc-files-silently-passes-under-pnpm.md.
+ * everything.
+ * See docs/lessons/tooling/tsc-files-silently-passes-under-pnpm.md.
  *
  * @type {import('lint-staged').Configuration}
  */

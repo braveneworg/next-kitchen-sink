@@ -120,8 +120,8 @@ Versions track `package.json` — update this block when they change.
   `tsc` on the CLI makes it ignore `tsconfig.json` and compile with default
   options. The function form is lint-staged's documented escape hatch; keep it.
   `tsc-files` used to fill this role and was removed — under pnpm's isolated
-  store it never spawned a compiler and exited 0 on everything. See
-  `docs/lessons/tooling/tsc-files-silently-passes-under-pnpm.md`.
+  store it never spawned a compiler and exited 0 on everything.
+  See `docs/lessons/tooling/tsc-files-silently-passes-under-pnpm.md`.
 - Vitest transforms with **oxc**, not esbuild — an `esbuild` block in
   `vitest.config.ts` is silently ignored. Use `oxc: { target: … }`.
 
