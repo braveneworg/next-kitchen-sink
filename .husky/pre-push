@@ -25,17 +25,32 @@ fi
 exec </dev/null
 
 force_push=0
+pushed_refs=0
+updates_existing_ref=0
 if [ -n "$push_refs" ]; then
   # Heredoc (not a pipe) so the loop runs in THIS shell and force_push sticks.
   while read -r _local_ref local_sha _remote_ref remote_sha; do
     case "$local_sha" in *[!0]*) : ;; *) continue ;; esac   # skip deletions
+    pushed_refs=$((pushed_refs + 1))
     case "$remote_sha" in *[!0]*) : ;; *) continue ;; esac  # skip new branches
+    updates_existing_ref=1
     if ! git merge-base --is-ancestor "$remote_sha" "$local_sha" 2>/dev/null; then
       force_push=1
     fi
   done <<EOF
 $push_refs
 EOF
+fi
+
+# Every ref in this push is being CREATED on the remote (git reported an
+# all-zero remote sha for each), so nothing that already exists there is being
+# touched. That is a seeding push — a brand-new repository, or a branch the
+# remote has never had. There is no shared history to protect and nothing to be
+# behind. With no ref lines on stdin (the hook run by hand) it cannot be told
+# apart from an ordinary push, so the stricter path stands.
+seeding_push=0
+if [ "$pushed_refs" -gt 0 ] && [ "$updates_existing_ref" = "0" ]; then
+  seeding_push=1
 fi
 
 # When invoked by `git push`, git exports GIT_* env vars that can confuse
@@ -96,12 +111,18 @@ trap cleanup EXIT INT TERM
 echo ""
 echo "===== pre-push hook started at $(date) ====="
 
-# Prevent pushing directly to main or master branches
+# Prevent pushing directly to main or master branches. The one exception is a
+# seeding push: if the remote does not have the branch yet, refusing would leave
+# a fresh repository with no legal first push at all.
 stage="branch protection"
 branch_name=$(git rev-parse --abbrev-ref HEAD)
 if [ "$branch_name" = "main" ] || [ "$branch_name" = "master" ]; then
-  echo "🚫 You are on the '$branch_name' branch. Pushing directly to this branch is not allowed."
-  exit 1
+  if [ "$seeding_push" = "1" ]; then
+    echo "🌱 '$branch_name' does not exist on the remote yet — allowing this push to seed it."
+  else
+    echo "🚫 You are on the '$branch_name' branch. Pushing directly to this branch is not allowed."
+    exit 1
+  fi
 fi
 
 # Resolve the branch's configured upstream (e.g. "origin/feature-x"). If the
@@ -139,62 +160,91 @@ if [ "$commits_ahead" = "0" ]; then
   exit 0
 fi
 
+# Fetches "<remote> <branch>". Exit codes: 0 fetched, 2 the remote answered but
+# has no such branch, 1 a genuine network/auth failure. A bare `git fetch`
+# cannot tell the last two apart, so ls-remote arbitrates: its --exit-code
+# returns exactly 2 for "reachable, no matching ref", and anything else non-zero
+# for a connection or auth problem.
+fetch_sync_ref() {
+  if git fetch "$1" "$2" --quiet; then
+    return 0
+  fi
+  git ls-remote --exit-code "$1" "refs/heads/$2" >/dev/null 2>&1
+  if [ "$?" -eq 2 ]; then
+    return 2
+  fi
+  return 1
+}
+
+# Fetch the sync ref so the comparisons below are against the latest remote
+# state. For first-push branches this fetches origin/main; for tracked
+# branches it fetches the actual upstream (avoids false "behind" results
+# for non-main upstreams). This runs BEFORE the WIP scan so that scan compares
+# against fresh remote state rather than a stale local copy of it.
+stage="fetch $sync_ref"
+no_baseline=0
+fetch_sync_ref "$sync_remote" "$sync_branch"
+fetch_rc=$?
+
+if [ "$fetch_rc" = "2" ] && [ "$has_upstream" = "1" ]; then
+  # The branch we track no longer exists remotely (commonly: it was merged and
+  # the remote branch tidied up), so there's nothing to be "behind" — push to
+  # re-create it. Keep the safety checks by falling back to comparing against
+  # origin/main, exactly like a brand-new branch.
+  echo "ℹ️  Upstream '$sync_ref' no longer exists on '$sync_remote' (branch deleted)."
+  echo "   Falling back to 'origin/main' and pushing to re-create the branch."
+  has_upstream=0
+  sync_ref="origin/main"
+  sync_remote="origin"
+  sync_branch="main"
+  stage="fetch $sync_ref"
+  fetch_sync_ref "$sync_remote" "$sync_branch"
+  fetch_rc=$?
+fi
+
+case "$fetch_rc" in
+  0) ;;
+  2)
+    # The remote is reachable but has no such branch — an empty repository, or
+    # one whose main has yet to be seeded. There is no baseline to measure this
+    # push against, so the sync comparisons are skipped below and the full gate
+    # runs in place of the changed-files shortcut.
+    no_baseline=1
+    echo "ℹ️  '$sync_ref' does not exist on '$sync_remote' yet — nothing to compare against."
+    ;;
+  *)
+    echo "❌ Failed to fetch latest changes from $sync_ref. Please check your network connection and try again."
+    exit 1
+    ;;
+esac
+
 # Block pushing WIP / fixup! / squash! commits — these should be rebased away
 # before review. Match against the subject line of each commit ahead of the
-# sync ref.
+# sync ref, or of every commit when there is no sync ref to be ahead of.
 stage="WIP/fixup commit scan"
-wip_subjects=$(git log "$sync_ref"..HEAD --pretty=%s | grep -iE '^(wip([: ]|$)|fixup!|squash!)' || true)
+if [ "$no_baseline" = "1" ]; then
+  wip_range="HEAD"
+  wip_rebase_onto="--root"
+else
+  wip_range="$sync_ref..HEAD"
+  wip_rebase_onto="$sync_ref"
+fi
+wip_subjects=$(git log "$wip_range" --pretty=%s | grep -iE '^(wip([: ]|$)|fixup!|squash!)' || true)
 if [ -n "$wip_subjects" ]; then
   echo "🚫 Refusing to push: WIP / fixup! / squash! commits present:"
   printf '   - %s\n' "$wip_subjects"
   echo ""
-  echo "   Rebase to clean these up:  git rebase -i $sync_ref --autosquash"
+  echo "   Rebase to clean these up:  git rebase -i $wip_rebase_onto --autosquash"
   exit 1
-fi
-
-# Fetch the sync ref so the comparison below is against the latest remote
-# state. For first-push branches this fetches origin/main; for tracked
-# branches it fetches the actual upstream (avoids false "behind" results
-# for non-main upstreams).
-stage="fetch $sync_ref"
-if ! git fetch "$sync_remote" "$sync_branch" --quiet; then
-  # A fetch failure is usually a network/auth problem — but it can also mean
-  # the upstream branch was DELETED on the remote (commonly: it was merged and
-  # the remote branch tidied up). Tell the two apart with ls-remote, whose
-  # --exit-code returns exactly 2 when the remote is reachable but has no such
-  # ref, versus any other non-zero for a connection/auth failure.
-  upstream_deleted=0
-  if [ "$has_upstream" = "1" ]; then
-    git ls-remote --exit-code "$sync_remote" "refs/heads/$sync_branch" >/dev/null 2>&1
-    [ "$?" -eq 2 ] && upstream_deleted=1
-  fi
-
-  if [ "$upstream_deleted" = "1" ]; then
-    # The branch we track no longer exists remotely, so there's nothing to be
-    # "behind" — push to re-create it. Keep the safety checks by falling back
-    # to comparing against origin/main, exactly like a brand-new branch.
-    echo "ℹ️  Upstream '$sync_ref' no longer exists on '$sync_remote' (branch deleted)."
-    echo "   Falling back to 'origin/main' and pushing to re-create the branch."
-    has_upstream=0
-    sync_ref="origin/main"
-    sync_remote="origin"
-    sync_branch="main"
-    stage="fetch $sync_ref"
-    if ! git fetch "$sync_remote" "$sync_branch" --quiet; then
-      echo "❌ Failed to fetch latest changes from $sync_ref. Please check your network connection and try again."
-      exit 1
-    fi
-  else
-    echo "❌ Failed to fetch latest changes from $sync_ref. Please check your network connection and try again."
-    exit 1
-  fi
 fi
 
 # If local branch is genuinely behind the sync ref, prevent push and tell
 # the user to merge it in first. For new branches this means merging
 # origin/main; for tracked branches it means rebasing onto the upstream.
 stage="up-to-date check against $sync_ref"
-if ! git merge-base --is-ancestor "$sync_ref" HEAD; then
+if [ "$no_baseline" = "1" ]; then
+  echo "⏭️  No baseline on '$sync_remote' — skipping the up-to-date check."
+elif ! git merge-base --is-ancestor "$sync_ref" HEAD; then
   if [ "$force_push" = "1" ]; then
     echo "⚠️  '$sync_ref' is not an ancestor of HEAD, but this is a force push"
     echo "    (e.g. --force-with-lease after a rebase) — skipping the up-to-date"
@@ -220,8 +270,12 @@ TS_CHANGED=$(git diff --name-only "$diff_base"..HEAD -- '*.ts' '*.tsx' 2>/dev/nu
 
 # A force push rewrites history, so always run the full gate (type-check, lint,
 # format, tests) regardless of which files appear changed vs the stale upstream.
-# Only the fast-forward path keeps the "no .ts/.tsx changed" skip optimization.
-if [ "$force_push" = "1" ]; then
+# A push with no baseline has nothing to diff against at all, so the skip would
+# silently wave through every file. Only the fast-forward path keeps the
+# "no .ts/.tsx changed" skip optimization.
+if [ "$no_baseline" = "1" ]; then
+  echo "🛡️  No baseline to diff against — running the full gate (type-check, lint, format, tests)."
+elif [ "$force_push" = "1" ]; then
   echo "🛡️  Force push detected — running the full gate (type-check, lint, format, tests)."
 elif [ -z "$TS_CHANGED" ]; then
   echo "📦 No .ts or .tsx files changed — skipping type-check, lint, format, and tests."
