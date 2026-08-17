@@ -230,13 +230,17 @@ elif [ -z "$TS_CHANGED" ]; then
 fi
 
 echo "🔍 Running TypeScript type-check before push..."
-stage="TypeScript type-check (pnpm exec tsc --noEmit)"
+stage="TypeScript type-check (pnpm run typecheck)"
 
-# Run TypeScript type-check on the entire project
-if ! pnpm exec tsc --noEmit; then
+# `pnpm run typecheck`, not a bare `tsc --noEmit`: typecheck runs `next typegen`
+# first, and PageProps/LayoutProps are generated globals that layout.tsx and
+# page.tsx reference. Calling tsc directly fails on any clone that has not yet
+# run a dev server or build. Invoking the script also keeps this hook and the
+# documented gate from drifting apart.
+if ! pnpm run typecheck; then
   echo ""
   echo "❌ TypeScript type-check failed. Please fix type errors before pushing."
-  echo "   Run 'pnpm exec tsc --noEmit' to see all errors."
+  echo "   Run 'pnpm run typecheck' to see all errors."
   exit 1
 fi
 

@@ -258,6 +258,11 @@ export default defineConfig((): ViteUserConfig => {
         { find: '@/lib', replacement: path.resolve(process.cwd(), './src/lib') },
         { find: '@/ui', replacement: path.resolve(process.cwd(), './src/app/components/ui') },
         { find: '@/hooks', replacement: path.resolve(process.cwd(), './src/hooks') },
+        // Must stay ahead of the bare `@` entry — Vite matches aliases in array
+        // order, so a broader prefix listed first would swallow this one. Keep
+        // this list in sync with tsconfig.json's `paths`; a spec that resolves
+        // differently from `tsc` is the hardest kind of test failure to read.
+        { find: '@/utils', replacement: path.resolve(process.cwd(), './src/lib/utils') },
         { find: '@', replacement: path.resolve(process.cwd(), './src') },
       ],
       conditions: ['import', 'module', 'browser', 'default'],
