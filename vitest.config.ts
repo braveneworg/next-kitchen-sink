@@ -170,6 +170,13 @@ export default defineConfig((): ViteUserConfig => {
         // (json-summary for coverage action + regression check, json for PR diff, text for log).
         // html/lcov/clover are large and unused in CI, and write significant disk I/O.
         reporter: process.env.CI ? ['text', 'json', 'json-summary'] : ['text', 'json', 'json-summary', 'html'],
+        // WITHOUT `include`, v8 reports only files a test actually loaded, so an
+        // untested module is absent from the report rather than counted as 0% —
+        // and the thresholds below become unfailable. Vitest's own docs are
+        // explicit: "By default only files covered by tests are included."
+        // Naming the source set here is what makes the gate able to fail.
+        include: ['src/**/*.{ts,tsx}'],
+
         // Coverage is gathered exclusively from `.ts`/`.tsx` first-party source.
         // Plain `.js`/`.jsx`/`.cjs`/`.mjs`/`.json` files are tooling, generated
         // output, or third-party shims — explicitly drop them so they cannot
@@ -214,19 +221,15 @@ export default defineConfig((): ViteUserConfig => {
           // Test utilities - not production code
           '**/test-utils/**',
 
-          // shadcn/ui primitives that wrap Base UI with no custom logic.
-          // These only add styling/className and delegate all behaviour to the
-          // underlying primitive, so unit tests would assert on class strings.
-          // Anything here with real logic of its own should be removed from the
-          // list and tested.
-          '**/components/ui/context-menu.tsx',
-          '**/components/ui/menubar.tsx',
-          '**/components/ui/calendar.tsx',
-          '**/components/ui/carousel.tsx',
-          '**/components/ui/scroll-area.tsx',
-          '**/components/ui/select.tsx',
-          '**/components/ui/sidebar.tsx',
-          '**/components/ui/chart.tsx',
+          // Vendored shadcn/ui primitives (61 files). These are generated into
+          // the repo by the shadcn CLI, not authored here, and they delegate
+          // behaviour to the underlying Base UI primitive. Measuring them would
+          // either demand ~61 spec files or permanently sink the headline number
+          // — neither of which says anything about this template's own code.
+          // If you add real logic to one, carve it out of this glob and test it.
+          // (button.tsx has a spec regardless; the tests run whether or not the
+          // file is instrumented.)
+          'src/app/components/ui/**',
 
           // CSS files
           '**/*.css',
