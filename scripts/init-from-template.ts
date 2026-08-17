@@ -6,10 +6,11 @@
  *
  *     pnpm run init-template
  *
- * It rewrites the four files that carry the template's identity — package.json,
+ * It rewrites the files that carry the template's identity — package.json,
  * README.md, LICENSE and COVERAGE_METRICS.md — with the new project's name,
- * description and author, then deletes itself and its spec so a generated
- * project carries no trace of the bootstrap.
+ * description and author; removes `docs/lessons/` along with every deep link
+ * into it; then deletes itself and its spec, so a generated project carries no
+ * trace of the bootstrap.
  *
  * The project name is resolved in order: `--name`, the `origin` git remote,
  * the containing directory's name.
@@ -358,6 +359,38 @@ export const rewriteCoverageMetrics = (
   return output.join('\n');
 };
 
+/**
+ * A deep link to one lesson file, e.g. ``docs/lessons/tooling/some-lesson.md``.
+ *
+ * Requires a `.md` filename, which is exactly what separates a dangling deep
+ * link from a structural mention of the convention — `docs/lessons/`,
+ * `docs/lessons/<category>/`, a tree listing. Those name no file and stay
+ * valid in a generated project, which still writes lessons of its own.
+ */
+const LESSON_FILE_LINK = /docs\/lessons\/[^\s)`]+\.md/;
+
+/**
+ * Remove references to individual lesson files.
+ *
+ * `init-template` deletes `docs/lessons/`, since the lessons record this
+ * template's history rather than the new project's. Every deep link to one is
+ * dropped with them; each already states its reason inline, so what is lost is
+ * the long-form background, not the warning itself.
+ *
+ * Each such link occupies a whole line in this template — deliberately, so
+ * removal is line-exact rather than prose surgery. Keep it that way.
+ *
+ * @param content Raw text of a file that may reference a lesson.
+ * @returns The text with lesson-file reference lines removed.
+ */
+export const stripLessonLinks = (content: string): string =>
+  content
+    .split('\n')
+    .filter((line) => !LESSON_FILE_LINK.test(line))
+    .join('\n')
+    // A removed standalone paragraph leaves a doubled blank line behind.
+    .replace(/\n{3,}/g, '\n\n');
+
 /** Extensions Prettier can infer a parser for, among the files this script rewrites. */
 const PRETTIER_EXTENSIONS = new Set(['.json', '.md']);
 
@@ -422,6 +455,40 @@ const readRemoteUrl = (): string | null => {
 
 /** Files this script removes from the generated project once it has run. */
 const SELF_FILES = ['scripts/init-from-template.ts', 'scripts/init-from-template.spec.ts'];
+
+/**
+ * The lessons directory, removed wholesale.
+ *
+ * Its files record incidents from this template's own history — a fresh
+ * project inherits them as stale docs, not as a head start. The convention
+ * survives in AGENTS.md, so the new project writes its own.
+ */
+const LESSONS_DIR = 'docs/lessons';
+
+/**
+ * Delete the lessons directory, and `docs/` too if nothing else lived there.
+ *
+ * @param root Absolute path to the project root.
+ * @param dryRun When true, nothing is deleted.
+ */
+const removeLessons = (root: string, dryRun: boolean): void => {
+  const lessonsPath = path.join(root, LESSONS_DIR);
+
+  if (!fs.existsSync(lessonsPath)) {
+    return;
+  }
+
+  if (!dryRun) {
+    fs.rmSync(lessonsPath, { recursive: true });
+
+    const docsPath = path.dirname(lessonsPath);
+    if (fs.readdirSync(docsPath).length === 0) {
+      fs.rmSync(docsPath, { recursive: true });
+    }
+  }
+
+  console.info(`${dryRun ? '👀' : '🗑️ '} ${LESSONS_DIR}/ (removed)`);
+};
 
 /** The template's own name — refusing it is what stops a no-op initialisation. */
 const TEMPLATE_NAME = 'next-kitchen-sink';
@@ -551,9 +618,12 @@ const main = (): void => {
 
   const rewrites: Rewrite[] = [
     ['package.json', (content) => rewritePackageJson(content, meta)],
-    ['README.md', (content) => rewriteReadme(content, meta)],
+    ['README.md', (content) => stripLessonLinks(rewriteReadme(content, meta))],
     ['LICENSE', (content) => rewriteLicense(content, meta)],
     ['COVERAGE_METRICS.md', (content) => rewriteCoverageMetrics(content, meta, thresholds, today)],
+    // The other two files carrying a deep link into the lessons directory.
+    ['AGENTS.md', stripLessonLinks],
+    ['lint-staged.config.mjs', stripLessonLinks],
   ];
 
   console.info(`   name:        ${meta.name}`);
@@ -564,6 +634,7 @@ const main = (): void => {
   );
 
   applyRewrites(root, rewrites, dryRun);
+  removeLessons(root, dryRun);
   removeSelf(root, dryRun);
 
   if (dryRun) {

@@ -7,6 +7,7 @@ import {
   rewriteLicense,
   rewritePackageJson,
   rewriteReadme,
+  stripLessonLinks,
   validateProjectName,
 } from './init-from-template';
 
@@ -171,6 +172,78 @@ describe('rewritePackageJson', () => {
     const { author } = JSON.parse(rewritePackageJson(source, { ...META, author: '' }));
 
     expect(author).toBe('Michaux Kelley <me@mkelley33.com>');
+  });
+});
+
+describe('stripLessonLinks', () => {
+  it('removes a Markdown bullet reference, keeping the reason stated above it', () => {
+    const source = [
+      '- oxlint 1 (`.oxlintrc.json`), not ESLint — typescript-eslint hard-throws on',
+      '  TypeScript 7, so the whole ESLint stack is incompatible.',
+      '  See `docs/lessons/tooling/typescript-7-has-no-js-compiler-api.md`.',
+      '  `eslint-plugin-security` still runs.',
+    ].join('\n');
+
+    const result = stripLessonLinks(source);
+
+    expect(result).not.toContain('docs/lessons/tooling/typescript-7');
+    expect(result).toContain('the whole ESLint stack is incompatible.');
+    expect(result).toContain('`eslint-plugin-security` still runs.');
+  });
+
+  it('removes a linked Markdown reference', () => {
+    const source = [
+      'Some prose.',
+      '',
+      'See [`docs/lessons/tooling/tsc-files-silently-passes-under-pnpm.md`](docs/lessons/tooling/tsc-files-silently-passes-under-pnpm.md) for the full background.',
+      '',
+      '## License',
+    ].join('\n');
+
+    const result = stripLessonLinks(source);
+
+    expect(result).not.toContain('docs/lessons');
+    expect(result).toContain('Some prose.');
+    expect(result).toContain('## License');
+  });
+
+  it('removes a reference from a JS block comment', () => {
+    const source = [
+      ' * everything.',
+      ' * See docs/lessons/tooling/tsc-files-silently-passes-under-pnpm.md.',
+      ' *',
+      " * @type {import('lint-staged').Configuration}",
+    ].join('\n');
+
+    const result = stripLessonLinks(source);
+
+    expect(result).not.toContain('docs/lessons');
+    expect(result).toContain(' * everything.');
+    expect(result).toContain('@type');
+  });
+
+  // Structural mentions of the convention must survive — a generated project
+  // still writes its own lessons, so AGENTS.md's category table stays valid.
+  // Only deep links to a specific `.md` file dangle once the files are gone.
+  it.each([
+    ['the directory convention', 'hard-won lessons in `docs/lessons/` — load on demand'],
+    ['a category path', 'lessons live in `docs/lessons/<category>/` — one file per lesson'],
+    ['a category directory', 'Load `docs/lessons/react-nextjs/` before UI work.'],
+    ['a tree listing', 'docs/lessons/               # Repo-specific lessons, grouped by category'],
+  ])('keeps %s', (_label, line) => {
+    expect(stripLessonLinks(line)).toBe(line);
+  });
+
+  it('collapses the blank-line run a removed paragraph leaves behind', () => {
+    const source = ['Prose.', '', 'See `docs/lessons/tooling/foo.md` for background.', '', 'More prose.'].join('\n');
+
+    expect(stripLessonLinks(source)).not.toMatch(/\n{3,}/);
+  });
+
+  it('is a no-op on content with no lesson links', () => {
+    const source = '# Title\n\nNothing to see here.\n';
+
+    expect(stripLessonLinks(source)).toBe(source);
   });
 });
 

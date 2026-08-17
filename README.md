@@ -18,8 +18,10 @@ pnpm run init-template  # rewrites the template's identity, then deletes itself
 `init-template` takes the project name from the `origin` remote — override it with `--name`, and set the blurb and
 copyright holder with `--description` and `--author`. It rewrites `package.json` (name, description, version reset to
 `0.1.0`, template-only keywords dropped), `README.md`, `LICENSE`, and `COVERAGE_METRICS.md` — reseeding the coverage
-baseline from `vitest.config.ts`'s thresholds rather than inheriting this template's own numbers. It then deletes
-itself, its spec, and this section. Preview the whole thing with `--dry-run`.
+baseline from `vitest.config.ts`'s thresholds rather than inheriting this template's own numbers. It also removes
+`docs/lessons/` and every deep link into it — those files record incidents from this repository's history, not the new
+project's — leaving the convention in `AGENTS.md` so the new project writes its own. It then deletes itself, its spec,
+and this section. Preview the whole thing with `--dry-run`.
 
 The coverage baseline matters most here: a generated project inherits `COVERAGE_METRICS.md`, and the template's own
 100% is not the new project's achievement. `init-template` reseeds it from the thresholds, so the regression gate is
@@ -191,8 +193,7 @@ Three ESLint plugins are still used — `eslint-plugin-security`, `eslint-plugin
 by semver.** This is a deliberate, accepted trade-off. If an oxlint upgrade makes those rules silently disappear, that
 is the cause: pin oxlint rather than deleting the rules.
 
-See [`docs/lessons/tooling/typescript-7-has-no-js-compiler-api.md`](docs/lessons/tooling/typescript-7-has-no-js-compiler-api.md)
-for the full background.
+See [`docs/lessons/tooling/typescript-7-has-no-js-compiler-api.md`](docs/lessons/tooling/typescript-7-has-no-js-compiler-api.md) for the full background.
 
 ## License
 
