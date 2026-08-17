@@ -1,4 +1,4 @@
-# boudreaux — Claude Code
+# Claude Code
 
 Read [~/.config/agents/AGENTS.md](~/.config/agents/AGENTS.md) before doing
 anything — it governs how to work overall, interact, and manage sessions.

@@ -1,4 +1,4 @@
-# boudreaux — Agent & Contributor Guidelines
+# Agent & Contributor Guidelines
 
 Last updated: 2026-08-16
 
