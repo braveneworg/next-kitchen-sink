@@ -1,10 +1,32 @@
 # next-kitchen-sink
 
 A starter template for Next.js applications — App Router, React 19, TypeScript 7, Tailwind v4, shadcn/ui, and TanStack
-Query, wired up with a full test and quality-gate toolchain so a new project startsss at production standards instead of
+Query, wired up with a full test and quality-gate toolchain so a new project starts at production standards instead of
 growing into them.
 
-Clone it, rename it, and start building.
+## Initialising a generated project
+
+This is a GitHub template repository. Generate a project from it, then run the one-shot initialiser:
+
+```bash
+gh repo create <org>/my-app --template braveneworg/next-kitchen-sink --private --clone
+cd my-app
+pnpm install            # also installs the Husky hooks via `prepare`
+pnpm run init-template  # rewrites the template's identity, then deletes itself
+```
+
+`init-template` takes the project name from the `origin` remote — override it with `--name`, and set the blurb and
+copyright holder with `--description` and `--author`. It rewrites `package.json` (name, description, version reset to
+`0.1.0`, template-only keywords dropped), `README.md`, `LICENSE`, and `COVERAGE_METRICS.md` — reseeding the coverage
+baseline from `vitest.config.ts`'s thresholds rather than inheriting this template's own numbers. It then deletes
+itself, its spec, and this section. Preview the whole thing with `--dry-run`.
+
+The coverage baseline matters most here: a generated project inherits `COVERAGE_METRICS.md`, and the template's own
+100% is not the new project's achievement. `init-template` reseeds it from the thresholds, so the regression gate is
+meaningful from the first run without failing the moment an uncovered line appears.
+
+> Generated projects are one-way copies. They share no history with this template and have no upstream link, so
+> improvements made here do not flow into projects already generated.
 
 ## Tech stack
 
@@ -161,7 +183,7 @@ Full contributor and AI-agent guidelines live in [`AGENTS.md`](AGENTS.md), with 
 
 ## Why oxlint and not ESLint?
 
-`typescript-eslint` hard-throws on TypeScript 7, which makes the entire ESLint stack incompatible with this template's
+`typescript-eslint` hard-throws on TypeScript 7, which makes the entire ESLint stack incompatible with this project's
 compiler. oxlint parses TypeScript natively in Rust and has no `typescript` peer dependency.
 
 Three ESLint plugins are still used — `eslint-plugin-security`, `eslint-plugin-better-tailwindcss`, and

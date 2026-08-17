@@ -18,6 +18,7 @@
   "author": "Michaux Kelley <me@mkelley33.com>",
   "license": "MIT",
   "scripts": {
+    "init-template": "tsx scripts/init-from-template.ts",
     "dev": "next dev --turbopack",
     "build": "next build --webpack",
     "start": "next start",
