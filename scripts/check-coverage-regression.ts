@@ -9,7 +9,9 @@
  * Tolerance Policy:
  * - Allows up to 2% decrease in any metric
  * - ONLY if the metric remains above the configured threshold
- * - Thresholds: statements: 95%, branches: 85%, functions: 95%, lines: 95%
+ * - Thresholds are read from `coverage.thresholds` in vitest.config.ts, never
+ *   duplicated here — see `parseThresholdsFromConfig`. The examples below
+ *   assume the 95% that config currently sets.
  *
  * Examples:
  * - Statement coverage: 97% → 95.5% ✅ (within 2% tolerance, above 95% threshold)
@@ -23,12 +25,75 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-interface CoverageMetrics {
+export interface CoverageMetrics {
   statements: number;
   branches: number;
   functions: number;
   lines: number;
 }
+
+/**
+ * Parse the four coverage thresholds out of a `vitest.config.ts` source string.
+ *
+ * Pure — exported so other tooling can read the same numbers the gate enforces
+ * without duplicating the parser or paying for this module's file IO. Throws
+ * rather than exiting so callers choose their own failure mode.
+ *
+ * @param configContent The full text of `vitest.config.ts`.
+ * @returns The parsed thresholds.
+ * @throws If the thresholds block or any individual metric is missing/unparseable.
+ */
+export const parseThresholdsFromConfig = (configContent: string): CoverageMetrics => {
+  // Parse the thresholds block from the config file in an order-independent way.
+  // Supports integer and decimal threshold values, e.g. 95 or 95.5.
+  const thresholdsBlockMatch = configContent.match(/thresholds\s*:\s*\{([\s\S]*?)\}/);
+
+  if (!thresholdsBlockMatch) {
+    throw new Error('Could not find coverage thresholds block in vitest.config.ts');
+  }
+
+  const thresholdsBlock = thresholdsBlockMatch[1];
+  // Static per-metric regexes (literals) keyed by metric name. Equivalent to the
+  // previously dynamic `new RegExp(\`\\b${key}\\s*:...\`)` but without a non-literal RegExp.
+  const metricRegexes = new Map<keyof CoverageMetrics, RegExp>([
+    ['lines', /\blines\s*:\s*(\d+\.?\d*)/],
+    ['functions', /\bfunctions\s*:\s*(\d+\.?\d*)/],
+    ['branches', /\bbranches\s*:\s*(\d+\.?\d*)/],
+    ['statements', /\bstatements\s*:\s*(\d+\.?\d*)/],
+  ]);
+  const parsedThresholds = new Map<keyof CoverageMetrics, number>();
+
+  for (const [key, keyRegex] of metricRegexes) {
+    const match = thresholdsBlock.match(keyRegex);
+
+    if (!match) {
+      throw new Error(`Could not parse "${key}" coverage threshold from vitest.config.ts`);
+    }
+
+    const value = parseFloat(match[1]);
+
+    if (Number.isNaN(value)) {
+      throw new Error(`Parsed "${key}" coverage threshold is not a valid number in vitest.config.ts`);
+    }
+
+    parsedThresholds.set(key, value);
+  }
+
+  const readMetric = (key: keyof CoverageMetrics): number => {
+    const value = parsedThresholds.get(key);
+    if (value === undefined) {
+      throw new Error(`Missing "${key}" coverage threshold in vitest.config.ts`);
+    }
+    return value;
+  };
+
+  return {
+    statements: readMetric('statements'),
+    branches: readMetric('branches'),
+    functions: readMetric('functions'),
+    lines: readMetric('lines'),
+  };
+};
 
 /**
  * Read coverage thresholds from vitest.config.ts to ensure consistency
@@ -52,59 +117,13 @@ const loadThresholdsFromConfig = (): CoverageMetrics => {
     }
     process.exit(1);
   }
-  // Parse the thresholds block from the config file in an order-independent way.
-  // Supports integer and decimal threshold values, e.g. 95 or 95.5.
-  const thresholdsBlockMatch = configContent.match(/thresholds\s*:\s*\{([\s\S]*?)\}/);
 
-  if (!thresholdsBlockMatch) {
-    console.error('❌ Could not find coverage thresholds block in vitest.config.ts');
+  try {
+    return parseThresholdsFromConfig(configContent);
+  } catch (error) {
+    console.error(`❌ ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
   }
-
-  const thresholdsBlock = thresholdsBlockMatch[1];
-  // Static per-metric regexes (literals) keyed by metric name. Equivalent to the
-  // previously dynamic `new RegExp(\`\\b${key}\\s*:...\`)` but without a non-literal RegExp.
-  const metricRegexes = new Map<keyof CoverageMetrics, RegExp>([
-    ['lines', /\blines\s*:\s*(\d+\.?\d*)/],
-    ['functions', /\bfunctions\s*:\s*(\d+\.?\d*)/],
-    ['branches', /\bbranches\s*:\s*(\d+\.?\d*)/],
-    ['statements', /\bstatements\s*:\s*(\d+\.?\d*)/],
-  ]);
-  const parsedThresholds = new Map<keyof CoverageMetrics, number>();
-
-  for (const [key, keyRegex] of metricRegexes) {
-    const match = thresholdsBlock.match(keyRegex);
-
-    if (!match) {
-      console.error(`❌ Could not parse "${key}" coverage threshold from vitest.config.ts`);
-      process.exit(1);
-    }
-
-    const value = parseFloat(match[1]);
-
-    if (Number.isNaN(value)) {
-      console.error(`❌ Parsed "${key}" coverage threshold is not a valid number in vitest.config.ts`);
-      process.exit(1);
-    }
-
-    parsedThresholds.set(key, value);
-  }
-
-  const readMetric = (key: keyof CoverageMetrics): number => {
-    const value = parsedThresholds.get(key);
-    if (value === undefined) {
-      console.error(`❌ Missing "${key}" coverage threshold in vitest.config.ts`);
-      process.exit(1);
-    }
-    return value;
-  };
-
-  return {
-    statements: readMetric('statements'),
-    branches: readMetric('branches'),
-    functions: readMetric('functions'),
-    lines: readMetric('lines'),
-  };
 };
 
 const THRESHOLDS: CoverageMetrics = loadThresholdsFromConfig();
