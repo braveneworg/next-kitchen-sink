@@ -225,7 +225,7 @@ export default defineConfig((): ViteUserConfig => {
           // the repo by the shadcn CLI, not authored here, and they delegate
           // behaviour to the underlying Base UI primitive. Measuring them would
           // either demand ~61 spec files or permanently sink the headline number
-          // — neither of which says anything about this template's own code.
+          // — neither of which says anything about this project's own code.
           // If you add real logic to one, carve it out of this glob and test it.
           // (button.tsx has a spec regardless; the tests run whether or not the
           // file is instrumented.)
