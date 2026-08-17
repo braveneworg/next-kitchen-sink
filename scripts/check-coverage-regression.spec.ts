@@ -1,4 +1,7 @@
-import { parsePct, refreshMetricsContent } from './check-coverage-regression';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+import { parsePct, parseThresholdsFromConfig, refreshMetricsContent } from './check-coverage-regression';
 
 const buildContent = (lastUpdatedLine: string): string =>
   [
@@ -85,5 +88,63 @@ describe('refreshMetricsContent', () => {
     const result = refreshMetricsContent(buildContent('**Last Updated:** 2026-07-04'), current, '2026-07-11');
 
     expect(result).toContain('| 2026-04-04 | 99.24%     | 96.13%   | 99.67%    | 99.44% | Improvement |');
+  });
+});
+
+describe('parseThresholdsFromConfig', () => {
+  const config = [
+    'export default defineConfig({',
+    '  test: {',
+    '    coverage: {',
+    '      thresholds: {',
+    '        statements: 95,',
+    '        branches: 85,',
+    '        functions: 95.5,',
+    '        lines: 95,',
+    '      },',
+    '    },',
+    '  },',
+    '});',
+  ].join('\n');
+
+  it('parses all four metrics, integer and decimal alike', () => {
+    expect(parseThresholdsFromConfig(config)).toEqual({
+      statements: 95,
+      branches: 85,
+      functions: 95.5,
+      lines: 95,
+    });
+  });
+
+  it('is order-independent', () => {
+    const reordered = 'thresholds: { lines: 91, statements: 92, functions: 93, branches: 94 }';
+
+    expect(parseThresholdsFromConfig(reordered)).toEqual({
+      statements: 92,
+      branches: 94,
+      functions: 93,
+      lines: 91,
+    });
+  });
+
+  it('throws when the thresholds block is absent', () => {
+    expect(() => parseThresholdsFromConfig('export default {}')).toThrowError(/thresholds block/i);
+  });
+
+  it('throws naming the metric that could not be parsed', () => {
+    expect(() => parseThresholdsFromConfig('thresholds: { statements: 95, branches: 85, lines: 95 }')).toThrowError(
+      /functions/
+    );
+  });
+
+  // The whole point of the export: a generated project's seeded baseline must
+  // be the same numbers the gate itself enforces.
+  it('agrees with the real vitest.config.ts', () => {
+    const actual = parseThresholdsFromConfig(readFileSync(join(process.cwd(), 'vitest.config.ts'), 'utf-8'));
+
+    expect(actual.statements).toBeGreaterThan(0);
+    expect(actual.branches).toBeGreaterThan(0);
+    expect(actual.functions).toBeGreaterThan(0);
+    expect(actual.lines).toBeGreaterThan(0);
   });
 });
