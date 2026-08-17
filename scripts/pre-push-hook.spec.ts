@@ -97,7 +97,11 @@ const createFixture = (): Fixture => {
  * live `tail` nor spills the log into the terminal running the suite.
  */
 const runHook = async (fixture: Fixture, pushRefs: string): Promise<HookResult> => {
-  const child = spawn('sh', ['-e', HOOK_PATH], {
+  // git invokes pre-push as `pre-push <remote-name> <remote-url>`, and husky
+  // forwards both through (`sh -e "$s" "$@"` in .husky/_/h). The hook reads the
+  // name to decide which remote to inspect, so pass them exactly as git would.
+  const remoteUrl = git(fixture.local, 'remote', 'get-url', 'origin');
+  const child = spawn('sh', ['-e', HOOK_PATH, 'origin', remoteUrl], {
     cwd: fixture.local,
     detached: true,
     env: {
@@ -155,14 +159,45 @@ describe('pre-push hook', () => {
     // The deadlock this hook used to create: a brand-new remote has no `main`,
     // so the only way to seed it is a push from `main` — which the blanket
     // branch check refused, leaving no legal first push at all.
-    it('allows a push from main that seeds a main the remote does not have', async () => {
+    it('allows a push from main that seeds a remote with no refs at all', async () => {
       const sha = git(fixture.local, 'rev-parse', 'HEAD');
 
       const result = await runHook(fixture, createRef('main', sha));
 
       expect(result.code).toBe(0);
       expect(result.log).not.toMatch(/Pushing directly to this branch is not allowed/);
-      expect(result.log).toMatch(/does not exist on the remote yet/);
+      expect(result.log).toMatch(/has no refs at all/);
+    });
+
+    // The exception is for bootstrapping an unseeded repository, NOT for "this
+    // particular branch happens to be missing". Deleting main on the forge must
+    // not re-open direct pushes to it — an all-zero remote sha alone cannot
+    // tell those apart, so the remote itself has to be inspected.
+    it('blocks a push from main after main was deleted on a remote that still has refs', async () => {
+      git(fixture.local, 'push', 'origin', 'main');
+      git(fixture.local, 'push', 'origin', 'main:refs/heads/develop');
+      // A repository refuses to delete the branch its HEAD points at, so the
+      // default has to move first — the same order a forge imposes.
+      git(fixture.remote, 'symbolic-ref', 'HEAD', 'refs/heads/develop');
+      git(fixture.local, 'push', 'origin', '--delete', 'main');
+      const sha = git(fixture.local, 'rev-parse', 'HEAD');
+
+      const result = await runHook(fixture, createRef('main', sha));
+
+      expect(result.code).toBe(1);
+      expect(result.log).toMatch(/Pushing directly to this branch is not allowed/);
+    });
+
+    // An unreachable remote must never be mistaken for an unseeded one — that
+    // would let a network blip unlock direct pushes to main.
+    it('fails when the remote is unreachable while checking whether it is unseeded', async () => {
+      git(fixture.local, 'remote', 'set-url', 'origin', path.join(fixture.root, 'does-not-exist.git'));
+      const sha = git(fixture.local, 'rev-parse', 'HEAD');
+
+      const result = await runHook(fixture, createRef('main', sha));
+
+      expect(result.code).toBe(1);
+      expect(result.log).toMatch(/Could not reach 'origin'/);
     });
 
     // Without stdin there is no way to tell a seeding push from an ordinary
@@ -178,6 +213,21 @@ describe('pre-push hook', () => {
 
   describe('missing baseline', () => {
     it('pushes a feature branch when the remote has no main to compare against', async () => {
+      git(fixture.local, 'checkout', '-b', 'feat/thing');
+      const sha = commit(fixture.local, 'feat: a thing');
+
+      const result = await runHook(fixture, createRef('feat/thing', sha));
+
+      expect(result.code).toBe(0);
+      expect(result.log).toMatch(/does not exist on 'origin' yet/);
+    });
+
+    // Deliberately NOT narrowed the way branch protection is. Branch protection
+    // asks "may I?", and a missing main is too weak a licence. This asks "what
+    // do I compare against?", and a missing main leaves genuinely nothing —
+    // whether or not the remote holds other refs.
+    it('pushes a feature branch when the remote has refs but no main', async () => {
+      git(fixture.local, 'push', 'origin', 'main:refs/heads/develop');
       git(fixture.local, 'checkout', '-b', 'feat/thing');
       const sha = commit(fixture.local, 'feat: a thing');
 
