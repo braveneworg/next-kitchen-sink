@@ -1,7 +1,7 @@
-# nextjs-app
+# next-kitchen-sink
 
 A starter template for Next.js applications — App Router, React 19, TypeScript 7, Tailwind v4, shadcn/ui, and TanStack
-Query, wired up with a full test and quality-gate toolchain so a new project starts at production standards instead of
+Query, wired up with a full test and quality-gate toolchain so a new project startsss at production standards instead of
 growing into them.
 
 Clone it, rename it, and start building.

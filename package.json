@@ -1,5 +1,5 @@
 {
-  "name": "nextjs-app",
+  "name": "next-kitchen-sink",
   "version": "1.0.0",
   "description": "A starter template for Next.js applications with React, TypeScript, Tailwind CSS, TanStack Query, and other essential tools.",
   "type": "module",
