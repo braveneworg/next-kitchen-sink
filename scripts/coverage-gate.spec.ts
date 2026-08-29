@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { parsePct, parseThresholdsFromConfig, refreshMetricsContent } from './check-coverage-regression';
+import { parsePct, parseThresholdsFromConfig, refreshMetricsContent } from './coverage-gate';
 
 const buildContent = (lastUpdatedLine: string): string =>
   [
