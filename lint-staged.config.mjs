@@ -24,5 +24,16 @@
  */
 export default {
   'src/**/*.{ts,tsx}': [() => 'pnpm run typecheck', 'oxlint --fix --max-warnings 0', 'prettier --write'],
+  // Repo tooling is TypeScript too, and matched neither entry: a commit
+  // touching only `scripts/**` got no oxlint, no prettier and no type check,
+  // while the hook still printed "Linting staged files passed" and "Type check
+  // of staged files passed". `.oxlintrc.json` already carries an override for
+  // `scripts/**/*.ts`, so the full `pnpm run lint` covered these files — only
+  // the staged gate did not.
+  //
+  // No `pnpm run typecheck` entry here: the one above is project-wide, so it
+  // already checks these files whenever any staged file matches it, and adding
+  // a second would run the whole compiler twice.
+  '{scripts,types}/**/*.ts': ['oxlint --fix --max-warnings 0', 'prettier --write'],
   '*.{json,css,md}': ['prettier --write'],
 };
