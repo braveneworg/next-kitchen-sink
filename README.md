@@ -135,10 +135,11 @@ Coverage thresholds are 95% for statements, branches, functions, and lines, with
 ```
 src/
 ├── app/                    # App Router — routes, layouts, and pages
-│   ├── components/ui/      # shadcn/ui primitives
 │   ├── globals.css         # Tailwind entry + design tokens
 │   ├── layout.tsx
 │   └── page.tsx
+├── components/
+│   └── ui/                 # shadcn/ui primitives
 ├── hooks/
 │   └── queries/            # TanStack Query hooks
 └── lib/                    # Server Actions, repositories, services, utils
@@ -148,14 +149,14 @@ docs/lessons/               # Repo-specific lessons, grouped by category
 
 ### Path aliases
 
-| Alias            | Resolves to               |
-| ---------------- | ------------------------- |
-| `@/*`            | `src/*`                   |
-| `@/components/*` | `src/app/components/*`    |
-| `@/ui/*`         | `src/app/components/ui/*` |
-| `@/lib/*`        | `src/lib/*`               |
-| `@/utils/*`      | `src/lib/utils/*`         |
-| `@/hooks/*`      | `src/hooks/*`             |
+| Alias            | Resolves to           |
+| ---------------- | --------------------- |
+| `@/*`            | `src/*`               |
+| `@/components/*` | `src/components/*`    |
+| `@/ui/*`         | `src/components/ui/*` |
+| `@/lib/*`        | `src/lib/*`           |
+| `@/utils/*`      | `src/lib/utils/*`     |
+| `@/hooks/*`      | `src/hooks/*`         |
 
 ## Adding shadcn/ui components
 
@@ -163,7 +164,7 @@ docs/lessons/               # Repo-specific lessons, grouped by category
 pnpm dlx shadcn@latest add <component>
 ```
 
-Components land in `src/app/components/ui` per `components.json`. The template ships the full primitive set already, so
+Components land in `src/components/ui` per `components.json`. The template ships the full primitive set already, so
 check there before adding anything.
 
 ## Conventions

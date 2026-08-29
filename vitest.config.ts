@@ -207,7 +207,7 @@ export default defineConfig((): ViteUserConfig => {
           // If you add real logic to one, carve it out of this glob and test it.
           // (button.tsx has a spec regardless; the tests run whether or not the
           // file is instrumented.)
-          'src/app/components/ui/**',
+          'src/components/ui/**',
 
           // Root layout — module-level code (env validation, HTTPS warning)
           // is not testable in jsdom/node environments. Anchored at `src/app`
@@ -241,9 +241,9 @@ export default defineConfig((): ViteUserConfig => {
       alias: [
         { find: /^html-react-parser$/, replacement: htmlReactParserCjs },
         { find: /^html-dom-parser$/, replacement: htmlDomParserClient },
-        { find: '@/components', replacement: path.resolve(process.cwd(), './src/app/components') },
+        { find: '@/components', replacement: path.resolve(process.cwd(), './src/components') },
         { find: '@/lib', replacement: path.resolve(process.cwd(), './src/lib') },
-        { find: '@/ui', replacement: path.resolve(process.cwd(), './src/app/components/ui') },
+        { find: '@/ui', replacement: path.resolve(process.cwd(), './src/components/ui') },
         { find: '@/hooks', replacement: path.resolve(process.cwd(), './src/hooks') },
         // Must stay ahead of the bare `@` entry — Vite matches aliases in array
         // order, so a broader prefix listed first would swallow this one. Keep

@@ -60,8 +60,8 @@ Deeper rules: [`src/app/AGENTS.md`](app/AGENTS.md) (UI, forms, styling),
 - Prefer destructuring everywhere, including function parameters. Implicit
   return for single-expression bodies; no parens around single params.
 - Imports use path aliases — never `../../` traversal except adjacent files:
-  `@/*`→`src/*`, `@/components/*`→`src/app/components/*`,
-  `@/ui/*`→`src/app/components/ui/*`, `@/hooks/*`→`src/hooks/*`,
+  `@/*`→`src/*`, `@/components/*`→`src/components/*`,
+  `@/ui/*`→`src/components/ui/*`, `@/hooks/*`→`src/hooks/*`,
   `@/lib/*`→`src/lib/*`, `@/utils/*`→`src/lib/utils/*`.
 
 ## Unit testing (Vitest)
