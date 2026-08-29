@@ -164,6 +164,10 @@ export default defineConfig((): ViteUserConfig => {
 
       coverage: {
         provider: 'v8',
+        // `scripts/coverage-gate.ts` does NOT import this file — it reads it as
+        // TEXT and regexes these four numbers out of the block below. Keep them
+        // as bare numeric literals: no nested object, no shared constant, no
+        // spread. `vitest.config.spec.ts` asserts the parser and Vitest agree.
         thresholds: {
           lines: 95,
           functions: 95,
@@ -176,54 +180,24 @@ export default defineConfig((): ViteUserConfig => {
         reporter: process.env.CI ? ['text', 'json', 'json-summary'] : ['text', 'json', 'json-summary', 'html'],
         // WITHOUT `include`, v8 reports only files a test actually loaded, so an
         // untested module is absent from the report rather than counted as 0% —
-        // and the thresholds below become unfailable. Vitest's own docs are
+        // and the thresholds above become unfailable. Vitest's own docs are
         // explicit: "By default only files covered by tests are included."
         // Naming the source set here is what makes the gate able to fail.
+        //
+        // This one glob is also what keeps `exclude` short. Coverage is gathered
+        // exclusively from first-party `.ts`/`.tsx` under `src/` — everything
+        // outside it (config, scripts, build output, node_modules) and every
+        // other extension (`.js`, `.jsx`, `.cjs`, `.mjs`, `.json`, `.css`) is
+        // already unreachable, so excluding it would be decoration.
         include: ['src/**/*.{ts,tsx}'],
 
-        // Coverage is gathered exclusively from `.ts`/`.tsx` first-party source.
-        // Plain `.js`/`.jsx`/`.cjs`/`.mjs`/`.json` files are tooling, generated
-        // output, or third-party shims — explicitly drop them so they cannot
-        // inflate or deflate the headline metrics.
+        // Vitest 4's `coverageConfigDefaults.exclude` is `[]` — nothing is
+        // inherited, so this list is the whole list. An entry earns its place
+        // only if it can match a `.ts`/`.tsx` file under `src/`.
+        // `vitest.config.spec.ts` fails on any entry that cannot.
         exclude: [
-          '**/*.{js,jsx,cjs,mjs,json}',
-          '**/*.css',
-          // Configuration files
-          '**/*.config.{ts,js,mjs,cjs}',
-          '**/vitest.config.ts',
-          '**/next.config.ts',
-          '**/postcss.config.mjs',
-          '**/tsconfig*.json',
-
-          // Type declarations and interfaces
-          '**/*.d.ts',
-          '**/types/**',
-
-          // Setup and tooling
-          '**/setupTests.ts',
-
-          // Build outputs and dependencies
-          '**/node_modules/**',
-          '**/dist/**',
-          '**/build/**',
-          '**/.next/**',
-          '**/coverage/**',
-
-          // Test files themselves
-          '**/*.{test,spec}.{ts,tsx,js,jsx}',
-
-          // Root layout — module-level code (env validation, HTTPS warning)
-          // is not testable in jsdom/node environments
-          '**/app/layout.tsx',
-
-          // Scripts and utilities that don't need testing
-          '**/scripts/**',
-
-          // Mocks directory
-          '**/__mocks__/**',
-
-          // Test utilities - not production code
-          '**/test-utils/**',
+          // Test files themselves — four specs live under `src/`.
+          '**/*.{test,spec}.{ts,tsx}',
 
           // Vendored shadcn/ui primitives (61 files). These are generated into
           // the repo by the shadcn CLI, not authored here, and they delegate
@@ -235,8 +209,18 @@ export default defineConfig((): ViteUserConfig => {
           // file is instrumented.)
           'src/app/components/ui/**',
 
-          // CSS files
-          '**/*.css',
+          // Root layout — module-level code (env validation, HTTPS warning)
+          // is not testable in jsdom/node environments. Anchored at `src/app`
+          // rather than `**/app/layout.tsx`, which would also swallow a
+          // legitimate `src/features/app/layout.tsx`.
+          'src/app/layout.tsx',
+
+          // Guards: these match nothing today, and `vitest.config.spec.ts`
+          // allowlists them for that reason. Both cover type-only modules,
+          // which have no executable statements and would land in the report
+          // as an unfixable 0%.
+          '**/*.d.ts',
+          '**/types/**',
         ],
       },
 
