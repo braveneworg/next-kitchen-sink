@@ -67,7 +67,16 @@ binds instead.
 
 - ✅ 100% → 98.5% (within tolerance, above threshold)
 - ❌ 100% → 97.5% (exceeds the 2% tolerance)
-- ❌ 97% → 94.5% (within tolerance, but below the 95% threshold)
+- ❌ 96% → 94.5% (within tolerance, but below the 95% threshold)
+
+When a drop breaches both bounds the threshold is the one reported, so
+`97% → 94.5%` fails as "below threshold of 95%" even though it also exceeds the
+tolerance. Each bullet above is a test case in `scripts/coverage-gate.spec.ts`.
+
+Note this file is the baseline for a **delta** check only: a metric at or above
+its baseline passes here however low the baseline is. The absolute floor is
+`coverage.thresholds` in `vitest.config.ts`, enforced by Vitest itself, which
+runs first in `pnpm run test:coverage:check`.
 
 ---
 
