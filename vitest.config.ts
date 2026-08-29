@@ -49,12 +49,16 @@ export default defineConfig((): ViteUserConfig => {
       root: import.meta.dirname,
       silent: withCoverage ? false : 'passed-only', // Silence test output when not collecting coverage
       name: packageJson.name,
-      environment: 'jsdom',
       // Use Vitest 4 workspace projects to split .spec.ts (node) and .spec.tsx
       // (happy-dom). Pure TypeScript spec files run in the lightweight Node
       // environment; skipping DOM init saves 1–3s wall clock. The .spec.ts files
       // that DO need DOM opt back in via a `// @vitest-environment jsdom` comment
-      // at the top (jsdom is retained for those explicit opt-ins).
+      // at the top (jsdom is retained for those explicit opt-ins, which is why
+      // setupTests.ts still carries its jsdom-specific shims).
+      //
+      // Every project below declares its own `environment`, so there is no root
+      // `environment` key: projects replace root test discovery entirely, and a
+      // root value here would be dead config that contradicts what actually runs.
       projects: [
         {
           extends: true,
@@ -68,7 +72,7 @@ export default defineConfig((): ViteUserConfig => {
         {
           extends: true,
           test: {
-            name: 'jsdom',
+            name: 'happy-dom',
             environment: 'happy-dom',
             include: ['**/*.spec.tsx'],
             exclude: ['**/node_modules/**'],
