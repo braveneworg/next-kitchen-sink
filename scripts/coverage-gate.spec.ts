@@ -145,6 +145,89 @@ describe('parseThresholdsFromConfig', () => {
     );
   });
 
+  // The config is read as TEXT, so a commented-out threshold is not a
+  // threshold. Before the block was comment-stripped the `// lines: 90` below
+  // won, and the gate silently enforced a number nobody had configured.
+  it('ignores a metric that only appears in a line comment', () => {
+    const commented = [
+      'thresholds: {',
+      '  // lines: 90 was the old value',
+      '  statements: 95,',
+      '  branches: 95,',
+      '  functions: 95,',
+      '  lines: 95,',
+      '}',
+    ].join('\n');
+
+    expect(parseThresholdsFromConfig(commented)).toEqual({
+      statements: 95,
+      branches: 95,
+      functions: 95,
+      lines: 95,
+    });
+  });
+
+  it('ignores a whole thresholds block that is commented out', () => {
+    const commented = [
+      '/* An earlier draft:',
+      ' * thresholds: { statements: 1, branches: 1, functions: 1, lines: 1 }',
+      ' */',
+      '// thresholds: { statements: 2, branches: 2, functions: 2, lines: 2 }',
+      'thresholds: { statements: 95, branches: 95, functions: 95, lines: 95 }',
+    ].join('\n');
+
+    expect(parseThresholdsFromConfig(commented)).toEqual({
+      statements: 95,
+      branches: 95,
+      functions: 95,
+      lines: 95,
+    });
+  });
+
+  // A non-greedy match to the FIRST `}` truncated the block at a nested
+  // object, so the metrics that followed it looked absent.
+  it('reads past a nested per-file object that opens the block', () => {
+    const nested = 'thresholds: { perFile: { lines: 90 }, statements: 95, branches: 95, functions: 95, lines: 95 }';
+
+    expect(parseThresholdsFromConfig(nested)).toEqual({
+      statements: 95,
+      branches: 95,
+      functions: 95,
+      lines: 95,
+    });
+  });
+
+  it('ignores a per-glob override that follows the four metrics', () => {
+    const override =
+      "thresholds: { statements: 95, branches: 95, functions: 95, lines: 95, 'src/utils/**': { lines: 100 } }";
+
+    expect(parseThresholdsFromConfig(override)).toEqual({
+      statements: 95,
+      branches: 95,
+      functions: 95,
+      lines: 95,
+    });
+  });
+
+  // A text parser cannot resolve an identifier. Reporting "missing" would send
+  // the reader hunting for a key that is right there — fail loudly instead.
+  it('throws when a metric is a constant rather than a numeric literal', () => {
+    const identifier = 'thresholds: { statements: STATEMENT_FLOOR, branches: 95, functions: 95, lines: 95 }';
+
+    expect(() => parseThresholdsFromConfig(identifier)).toThrowError(/statements/);
+    expect(() => parseThresholdsFromConfig(identifier)).toThrowError(/numeric literal/i);
+  });
+
+  it('throws when the block is assembled with a spread', () => {
+    const spread = 'thresholds: { ...base, statements: 95, branches: 95, functions: 95, lines: 95 }';
+
+    expect(() => parseThresholdsFromConfig(spread)).toThrowError(/spread/i);
+  });
+
+  it('throws when the block is never closed', () => {
+    expect(() => parseThresholdsFromConfig('thresholds: { statements: 95,')).toThrowError(/thresholds block/i);
+  });
+
   // The whole point of the export: a generated project's seeded baseline must
   // be the same numbers the gate itself enforces. Asserted as exact values, not
   // merely positive — a 95→5 typo has to fail here. Raising the bar in

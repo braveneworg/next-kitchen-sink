@@ -76,51 +76,226 @@ export const readMetric = (source: CoverageMetrics, metric: keyof CoverageMetric
   }
 };
 
+/** The characters that open a string literal in TypeScript source. */
+const STRING_DELIMITERS = new Set(["'", '"', '`']);
+
+/**
+ * Index just past the string literal that opens at `openIndex`.
+ *
+ * Backslash escapes are skipped whole, so an escaped quote does not close the
+ * literal. An unterminated literal consumes the rest of the source.
+ */
+const endOfStringLiteral = (source: string, openIndex: number): number => {
+  // charAt, not [], throughout this module: bracket indexing a string trips
+  // oxlint's security/detect-object-injection, and charAt is equivalent here
+  // (both yield '' past the end, which matches nothing).
+  const quote = source.charAt(openIndex);
+  let index = openIndex + 1;
+
+  while (index < source.length) {
+    if (source.charAt(index) === '\\') {
+      index += 2;
+      continue;
+    }
+    if (source.charAt(index) === quote) {
+      return index + 1;
+    }
+    index += 1;
+  }
+
+  return source.length;
+};
+
+/**
+ * Blank out `//` and block comments, preserving every other character's offset.
+ *
+ * Comment bodies become spaces (newlines are kept) so that a commented-out
+ * `thresholds: {` or `lines: 90` cannot be mistaken for configuration, while
+ * indexes into the result still address the original source. String literals
+ * are skipped so a `//` inside one survives. Regex literals are NOT tracked —
+ * `vitest.config.ts` has none, and one containing a quote would be misread.
+ */
+const stripComments = (source: string): string => {
+  let result = '';
+  let index = 0;
+
+  while (index < source.length) {
+    const char = source.charAt(index);
+
+    if (STRING_DELIMITERS.has(char)) {
+      const end = endOfStringLiteral(source, index);
+      result += source.slice(index, end);
+      index = end;
+      continue;
+    }
+
+    if (char === '/' && source.charAt(index + 1) === '/') {
+      const newline = source.indexOf('\n', index);
+      const end = newline === -1 ? source.length : newline;
+      result += ' '.repeat(end - index);
+      index = end;
+      continue;
+    }
+
+    if (char === '/' && source.charAt(index + 1) === '*') {
+      const close = source.indexOf('*/', index + 2);
+      const end = close === -1 ? source.length : close + 2;
+      result += source.slice(index, end).replace(/[^\n]/g, ' ');
+      index = end;
+      continue;
+    }
+
+    result += char;
+    index += 1;
+  }
+
+  return result;
+};
+
+/**
+ * Index of the `}` that closes the `{` at `openIndex`, or -1 if it is never
+ * closed. Braces inside string literals are ignored.
+ */
+const indexOfMatchingBrace = (source: string, openIndex: number): number => {
+  let depth = 0;
+  let index = openIndex;
+
+  while (index < source.length) {
+    const char = source.charAt(index);
+
+    if (STRING_DELIMITERS.has(char)) {
+      index = endOfStringLiteral(source, index);
+      continue;
+    }
+
+    if (char === '{') {
+      depth += 1;
+    } else if (char === '}') {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+
+    index += 1;
+  }
+
+  return -1;
+};
+
+/**
+ * Remove every nested `{ … }` group from an object-literal body, leaving only
+ * its top-level text. This is what stops a `perFile: { lines: 90 }` sub-block
+ * or a `'src/**': { lines: 100 }` per-glob override from supplying a metric.
+ */
+const stripNestedBlocks = (body: string): string => {
+  let result = '';
+  let index = 0;
+
+  while (index < body.length) {
+    const char = body.charAt(index);
+
+    if (STRING_DELIMITERS.has(char)) {
+      const end = endOfStringLiteral(body, index);
+      result += body.slice(index, end);
+      index = end;
+      continue;
+    }
+
+    if (char === '{') {
+      const close = indexOfMatchingBrace(body, index);
+      index = close === -1 ? body.length : close + 1;
+      continue;
+    }
+
+    result += char;
+    index += 1;
+  }
+
+  return result;
+};
+
+/** A threshold value this parser can resolve: an integer or decimal literal. */
+const NUMERIC_LITERAL = /^\d+\.?\d*$/;
+
+/**
+ * Static per-metric patterns. The value is captured up to the next separator
+ * rather than as digits, so a non-numeric value is reported as such instead of
+ * looking like a missing key.
+ */
+const METRIC_PATTERNS: readonly (readonly [keyof CoverageMetrics, RegExp])[] = [
+  ['statements', /\bstatements\s*:\s*([^,\n]*)/],
+  ['branches', /\bbranches\s*:\s*([^,\n]*)/],
+  ['functions', /\bfunctions\s*:\s*([^,\n]*)/],
+  ['lines', /\blines\s*:\s*([^,\n]*)/],
+];
+
 /**
  * Parse the four coverage thresholds out of a `vitest.config.ts` source string.
  *
- * Reads the config as TEXT, so the block must stay literal: four numeric
- * literals, no nested object, no constant or spread. See the note beside
- * `coverage.thresholds` in vitest.config.ts.
+ * The config is read as TEXT, never evaluated, so the contract is narrow and
+ * enforced rather than assumed:
+ *
+ * - Comments are stripped first. A `// lines: 90` or a commented-out
+ *   `thresholds: {` block is not configuration and cannot win.
+ * - The block is taken as a BRACE-BALANCED slice of the first real
+ *   `thresholds: { … }`, so it can be read past a nested object.
+ * - Nested `{ … }` groups inside it are discarded before the metrics are
+ *   matched, so `perFile` and per-glob overrides never supply a value.
+ * - Each of `statements`, `branches`, `functions` and `lines` must appear once
+ *   at the top level of that block with an integer or decimal LITERAL. An
+ *   identifier, expression or spread throws — it cannot be resolved from text,
+ *   and reporting it as "missing" would send the reader hunting for a key that
+ *   is plainly there.
+ *
+ * Order is irrelevant.
  *
  * @param configContent The full text of `vitest.config.ts`.
  * @returns The parsed thresholds.
- * @throws If the thresholds block or any individual metric is missing/unparseable.
+ * @throws If the thresholds block is missing or unterminated, if it uses a
+ *   spread, or if any metric is missing or is not a numeric literal.
  */
 export const parseThresholdsFromConfig = (configContent: string): CoverageMetrics => {
-  // Parse the thresholds block from the config file in an order-independent way.
-  // Supports integer and decimal threshold values, e.g. 95 or 95.5.
-  const thresholdsBlockMatch = configContent.match(/thresholds\s*:\s*\{([\s\S]*?)\}/);
+  const source = stripComments(configContent);
+  const keyMatch = source.match(/\bthresholds\s*:\s*\{/);
 
-  if (!thresholdsBlockMatch) {
+  if (!keyMatch || keyMatch.index === undefined) {
     throw new Error('Could not find coverage thresholds block in vitest.config.ts');
   }
 
-  const thresholdsBlock = thresholdsBlockMatch[1];
-  // Static per-metric regexes (literals) keyed by metric name. Equivalent to the
-  // previously dynamic `new RegExp(\`\\b${key}\\s*:...\`)` but without a non-literal RegExp.
-  const metricRegexes = new Map<keyof CoverageMetrics, RegExp>([
-    ['lines', /\blines\s*:\s*(\d+\.?\d*)/],
-    ['functions', /\bfunctions\s*:\s*(\d+\.?\d*)/],
-    ['branches', /\bbranches\s*:\s*(\d+\.?\d*)/],
-    ['statements', /\bstatements\s*:\s*(\d+\.?\d*)/],
-  ]);
+  const openIndex = keyMatch.index + keyMatch[0].length - 1;
+  const closeIndex = indexOfMatchingBrace(source, openIndex);
+
+  if (closeIndex === -1) {
+    throw new Error('The coverage thresholds block in vitest.config.ts is never closed — no matching `}` was found.');
+  }
+
+  const thresholdsBlock = stripNestedBlocks(source.slice(openIndex + 1, closeIndex));
+
+  if (thresholdsBlock.includes('...')) {
+    throw new Error(
+      'The coverage thresholds block in vitest.config.ts uses a spread, which cannot be resolved from ' +
+        'the config text. List statements, branches, functions and lines as numeric literals.'
+    );
+  }
+
   const parsedThresholds = new Map<keyof CoverageMetrics, number>();
 
-  for (const [key, keyRegex] of metricRegexes) {
+  for (const [key, keyRegex] of METRIC_PATTERNS) {
     const match = thresholdsBlock.match(keyRegex);
 
     if (!match) {
       throw new Error(`Could not parse "${key}" coverage threshold from vitest.config.ts`);
     }
 
-    const value = parseFloat(match[1]);
+    const literal = match[1].trim();
 
-    if (Number.isNaN(value)) {
-      throw new Error(`Parsed "${key}" coverage threshold is not a valid number in vitest.config.ts`);
+    if (!NUMERIC_LITERAL.test(literal)) {
+      throw new Error(
+        `The "${key}" coverage threshold in vitest.config.ts must be a numeric literal, but reads \`${literal}\`. ` +
+          'The gate parses the config as text and cannot resolve identifiers or expressions.'
+      );
     }
 
-    parsedThresholds.set(key, value);
+    parsedThresholds.set(key, parseFloat(literal));
   }
 
   const readParsed = (key: keyof CoverageMetrics): number => {
