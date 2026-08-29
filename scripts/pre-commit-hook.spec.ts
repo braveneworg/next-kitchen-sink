@@ -169,6 +169,25 @@ describe('pre-commit hook', () => {
 
       expect(readPnpmLog(fixture)).not.toMatch(/exec vitest run/);
     });
+
+    // `vitest --changed` diffs the module graph, which cannot see a shell
+    // script — so editing a hook used to run none of the specs that cover it,
+    // the same blind spot as the spec filter one level out.
+    it('runs the hook specs when a hook itself changed', async () => {
+      stageFile(fixture, '.husky/pre-push', '#!/bin/sh\nexit 0\n');
+
+      await runPreCommit(fixture);
+
+      expect(readPnpmLog(fixture)).toMatch(/exec vitest run scripts/);
+    });
+
+    it('does not run the hook specs when no hook changed', async () => {
+      stageFile(fixture, 'src/thing.ts');
+
+      await runPreCommit(fixture);
+
+      expect(readPnpmLog(fixture)).not.toMatch(/exec vitest run scripts/);
+    });
   });
 
   describe('the very first commit', () => {
