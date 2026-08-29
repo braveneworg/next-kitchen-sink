@@ -1,137 +1,35 @@
-import { execFileSync, spawn } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import * as path from 'node:path';
+
+import {
+  cleanupFixture,
+  commit,
+  createFixture,
+  createRef,
+  type Fixture,
+  git,
+  type HookResult,
+  readPnpmLog,
+  runHook,
+  updateRef,
+} from './husky-test-utils';
 
 /**
  * Behavioural tests for `.husky/pre-push`.
  *
  * The hook is exercised the way husky invokes it — `sh -e .husky/pre-push` with
  * git's `<local ref> <local sha> <remote ref> <remote sha>` lines on stdin —
- * against throwaway repositories on disk. Nothing is stubbed: a real bare repo
- * stands in for the remote, so "the remote has no main yet" is a genuine state
- * rather than a mocked return value.
+ * against throwaway repositories on disk. Nothing is stubbed except the
+ * toolchain: a real bare repo stands in for the remote, so "the remote has no
+ * main yet" is a genuine state rather than a mocked return value.
  */
 
-const HOOK_PATH = path.resolve(import.meta.dirname, '../.husky/pre-push');
-const ZERO_SHA = '0'.repeat(40);
-
-interface HookResult {
-  /** Exit status of the hook process. */
-  code: number;
-  /** Contents of the hook's diagnostic log (its real output channel). */
-  log: string;
-}
-
-interface Fixture {
-  /** Working repository the hook runs inside. */
-  local: string;
-  /** Bare repository standing in for `origin`. */
-  remote: string;
-  /** Directory handed to the hook as `TMPDIR`, where it writes its log. */
-  tmp: string;
-  /** Directory prepended to `PATH`, holding the stubbed `pnpm`. */
-  bin: string;
-  /** Root of everything above, removed in `afterEach`. */
-  root: string;
-}
-
-const git = (cwd: string, ...args: readonly string[]): string =>
-  execFileSync('git', args, {
-    cwd,
-    encoding: 'utf8',
-    env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' },
-    // Capture stderr rather than inheriting it: git narrates branch switches and
-    // pushes on stderr even when it succeeds, which would otherwise scatter
-    // through the suite's output.
-    stdio: ['ignore', 'pipe', 'pipe'],
-  }).trim();
-
-const commit = (cwd: string, subject: string): string => {
-  writeFileSync(path.join(cwd, 'file.txt'), `${subject}\n`);
-  git(cwd, 'add', 'file.txt');
-  git(cwd, 'commit', '-m', subject);
-  return git(cwd, 'rev-parse', 'HEAD');
-};
-
-/**
- * Builds an isolated local + bare-remote pair with one commit on `main`.
- * The remote starts EMPTY — no refs at all — which is the state a freshly
- * created GitHub repository is in.
- */
-const createFixture = (): Fixture => {
-  const root = mkdtempSync(path.join(tmpdir(), 'pre-push-hook-'));
-  const remote = path.join(root, 'remote.git');
-  const local = path.join(root, 'local');
-  const tmp = path.join(root, 'tmp');
-  const bin = path.join(root, 'bin');
-
-  mkdirSync(remote);
-  mkdirSync(local);
-  mkdirSync(tmp);
-  mkdirSync(bin);
-
-  // The hook shells out to `pnpm run typecheck|lint|format:check|test:...` once
-  // the git-level checks pass. Those are irrelevant here and cost minutes, so a
-  // stub stands in — the tests assert on which checks the hook reaches, not on
-  // what the real toolchain reports.
-  const pnpmStub = path.join(bin, 'pnpm');
-  writeFileSync(pnpmStub, '#!/bin/sh\nexit 0\n');
-  chmodSync(pnpmStub, 0o755);
-
-  git(remote, 'init', '--bare', '--initial-branch=main');
-  git(local, 'init', '--initial-branch=main');
-  git(local, 'config', 'user.email', 'test@example.com');
-  git(local, 'config', 'user.name', 'Test');
-  git(local, 'remote', 'add', 'origin', remote);
-  commit(local, 'chore: initial commit');
-
-  return { bin, local, remote, root, tmp };
-};
-
-/**
- * Runs the hook and resolves with its exit code and log.
- *
- * `detached` puts the child in its own session so it has no controlling
- * terminal: the hook's `/dev/tty` probe then fails, and it neither spawns a
- * live `tail` nor spills the log into the terminal running the suite.
- */
-const runHook = async (fixture: Fixture, pushRefs: string): Promise<HookResult> => {
-  // git invokes pre-push as `pre-push <remote-name> <remote-url>`, and husky
-  // forwards both through (`sh -e "$s" "$@"` in .husky/_/h). The hook reads the
-  // name to decide which remote to inspect, so pass them exactly as git would.
-  const remoteUrl = git(fixture.local, 'remote', 'get-url', 'origin');
-  const child = spawn('sh', ['-e', HOOK_PATH, 'origin', remoteUrl], {
-    cwd: fixture.local,
-    detached: true,
-    env: {
-      ...process.env,
-      GIT_CONFIG_GLOBAL: '/dev/null',
-      GIT_CONFIG_SYSTEM: '/dev/null',
-      PATH: `${fixture.bin}:${process.env.PATH ?? ''}`,
-      TMPDIR: fixture.tmp,
-    },
-    stdio: ['pipe', 'pipe', 'pipe'],
+/** Invoke the hook exactly as git does: `pre-push <remote-name> <remote-url>`. */
+const runPrePush = (fixture: Fixture, stdin: string): Promise<HookResult> =>
+  runHook(fixture, {
+    args: ['origin', git(fixture.local, 'remote', 'get-url', 'origin')],
+    hook: 'pre-push',
+    stdin,
   });
-
-  child.stdout.resume();
-  child.stderr.resume();
-  child.stdin.end(pushRefs);
-
-  const code = await new Promise<number>((resolve, reject) => {
-    child.once('error', reject);
-    child.once('close', (status) => resolve(status ?? 1));
-  });
-
-  return { code, log: readFileSync(path.join(fixture.tmp, 'husky-pre-push.log'), 'utf8') };
-};
-
-/** git's stdin line for a push that CREATES `ref` on the remote. */
-const createRef = (ref: string, sha: string): string => `refs/heads/${ref} ${sha} refs/heads/${ref} ${ZERO_SHA}\n`;
-
-/** git's stdin line for a push that UPDATES an existing `ref` on the remote. */
-const updateRef = (ref: string, sha: string, remoteSha: string): string =>
-  `refs/heads/${ref} ${sha} refs/heads/${ref} ${remoteSha}\n`;
 
 describe('pre-push hook', () => {
   let fixture: Fixture;
@@ -141,7 +39,7 @@ describe('pre-push hook', () => {
   });
 
   afterEach(() => {
-    rmSync(fixture.root, { force: true, recursive: true });
+    cleanupFixture(fixture);
   });
 
   describe('branch protection', () => {
@@ -150,7 +48,7 @@ describe('pre-push hook', () => {
       const remoteSha = git(fixture.local, 'rev-parse', 'HEAD');
       const sha = commit(fixture.local, 'feat: second commit');
 
-      const result = await runHook(fixture, updateRef('main', sha, remoteSha));
+      const result = await runPrePush(fixture, updateRef('main', sha, remoteSha));
 
       expect(result.code).toBe(1);
       expect(result.log).toMatch(/Pushing directly to this branch is not allowed/);
@@ -162,7 +60,7 @@ describe('pre-push hook', () => {
     it('allows a push from main that seeds a remote with no refs at all', async () => {
       const sha = git(fixture.local, 'rev-parse', 'HEAD');
 
-      const result = await runHook(fixture, createRef('main', sha));
+      const result = await runPrePush(fixture, createRef('main', sha));
 
       expect(result.code).toBe(0);
       expect(result.log).not.toMatch(/Pushing directly to this branch is not allowed/);
@@ -182,7 +80,7 @@ describe('pre-push hook', () => {
       git(fixture.local, 'push', 'origin', '--delete', 'main');
       const sha = git(fixture.local, 'rev-parse', 'HEAD');
 
-      const result = await runHook(fixture, createRef('main', sha));
+      const result = await runPrePush(fixture, createRef('main', sha));
 
       expect(result.code).toBe(1);
       expect(result.log).toMatch(/Pushing directly to this branch is not allowed/);
@@ -194,7 +92,7 @@ describe('pre-push hook', () => {
       git(fixture.local, 'remote', 'set-url', 'origin', path.join(fixture.root, 'does-not-exist.git'));
       const sha = git(fixture.local, 'rev-parse', 'HEAD');
 
-      const result = await runHook(fixture, createRef('main', sha));
+      const result = await runPrePush(fixture, createRef('main', sha));
 
       expect(result.code).toBe(1);
       expect(result.log).toMatch(/Could not reach 'origin'/);
@@ -204,7 +102,7 @@ describe('pre-push hook', () => {
     // one, so the hook must keep refusing rather than guess in the user's
     // favour.
     it('still blocks a push from main when git supplied no ref lines', async () => {
-      const result = await runHook(fixture, '');
+      const result = await runPrePush(fixture, '');
 
       expect(result.code).toBe(1);
       expect(result.log).toMatch(/Pushing directly to this branch is not allowed/);
@@ -216,7 +114,7 @@ describe('pre-push hook', () => {
       git(fixture.local, 'checkout', '-b', 'feat/thing');
       const sha = commit(fixture.local, 'feat: a thing');
 
-      const result = await runHook(fixture, createRef('feat/thing', sha));
+      const result = await runPrePush(fixture, createRef('feat/thing', sha));
 
       expect(result.code).toBe(0);
       expect(result.log).toMatch(/does not exist on 'origin' yet/);
@@ -231,7 +129,7 @@ describe('pre-push hook', () => {
       git(fixture.local, 'checkout', '-b', 'feat/thing');
       const sha = commit(fixture.local, 'feat: a thing');
 
-      const result = await runHook(fixture, createRef('feat/thing', sha));
+      const result = await runPrePush(fixture, createRef('feat/thing', sha));
 
       expect(result.code).toBe(0);
       expect(result.log).toMatch(/does not exist on 'origin' yet/);
@@ -241,12 +139,16 @@ describe('pre-push hook', () => {
       git(fixture.local, 'checkout', '-b', 'feat/thing');
       const sha = commit(fixture.local, 'feat: a thing');
 
-      const result = await runHook(fixture, createRef('feat/thing', sha));
+      const result = await runPrePush(fixture, createRef('feat/thing', sha));
 
       expect(result.code).toBe(0);
       expect(result.log).toMatch(/type-check passed/);
       expect(result.log).toMatch(/oxlint passed/);
-      expect(result.log).toMatch(/All tests passed/);
+      // Matches both the current "✅ All tests passed" and the shorter wording
+      // the shared failure/success template produces, so the migration to
+      // `.husky/lib.sh` needs no edit here. If this assertion ever has to
+      // change, behaviour changed — not just phrasing.
+      expect(result.log).toMatch(/tests passed/);
       expect(result.log).not.toMatch(/skipping type-check/);
     });
 
@@ -257,7 +159,7 @@ describe('pre-push hook', () => {
       git(fixture.local, 'checkout', '-b', 'feat/thing');
       const sha = commit(fixture.local, 'feat: a thing');
 
-      const result = await runHook(fixture, createRef('feat/thing', sha));
+      const result = await runPrePush(fixture, createRef('feat/thing', sha));
 
       expect(result.code).toBe(1);
       expect(result.log).toMatch(/Failed to fetch latest changes/);
@@ -268,7 +170,7 @@ describe('pre-push hook', () => {
     it('blocks WIP commits on a seeding push', async () => {
       const sha = commit(fixture.local, 'wip: not ready');
 
-      const result = await runHook(fixture, createRef('main', sha));
+      const result = await runPrePush(fixture, createRef('main', sha));
 
       expect(result.code).toBe(1);
       expect(result.log).toMatch(/WIP \/ fixup! \/ squash! commits present/);
@@ -283,10 +185,58 @@ describe('pre-push hook', () => {
       git(fixture.local, 'push', 'origin', 'main');
       git(fixture.local, 'checkout', 'feat/stale');
 
-      const result = await runHook(fixture, createRef('feat/stale', stale));
+      const result = await runPrePush(fixture, createRef('feat/stale', stale));
 
       expect(result.code).toBe(1);
       expect(result.log).toMatch(/is missing commits from 'origin\/main'/);
+    });
+  });
+
+  // Every gate the hook runs, driven red. The old stub exited 0 for everything,
+  // so none of these four branches had ever been executed — the same "only ever
+  // observed passing" state that hid the tsc-files bug for months.
+  describe('gate failures', () => {
+    // Deliberately leaves the remote unseeded. With no baseline to diff
+    // against, the hook runs the full gate rather than taking the
+    // "no TypeScript changed" shortcut — which is what these tests need to
+    // reach. Pushing main first would give it a baseline, and the fixture's
+    // commits touch no .ts files, so every gate would be skipped.
+    const seedFeatureBranch = (): string => {
+      git(fixture.local, 'checkout', '-b', 'feat/thing');
+      return commit(fixture.local, 'feat: a thing');
+    };
+
+    it.each([
+      ['run typecheck', /type-check/i],
+      ['run lint', /lint/i],
+      ['run format:check', /format/i],
+      ['run test:coverage:check', /test/i],
+    ])('fails the push when `pnpm %s` fails', async (command, expected) => {
+      const sha = seedFeatureBranch();
+
+      const result = await runHook(fixture, {
+        args: ['origin', git(fixture.local, 'remote', 'get-url', 'origin')],
+        env: { PNPM_FAIL: `${command}*` },
+        hook: 'pre-push',
+        stdin: createRef('feat/thing', sha),
+      });
+
+      expect({ code: result.code, matched: expected.test(result.log ?? '') }).toEqual({ code: 1, matched: true });
+    });
+
+    // pnpm appends run-args to the END of the script string, and
+    // `test:coverage:check` is `vitest run --coverage && tsx …`, so any flags
+    // passed here land on the tsx invocation, which ignores them. Passing them
+    // at all is a silent no-op that reads like configuration.
+    it('runs the coverage gate with no trailing reporter flags', async () => {
+      const sha = seedFeatureBranch();
+
+      await runPrePush(fixture, createRef('feat/thing', sha));
+
+      const log = readPnpmLog(fixture);
+
+      expect(log).toContain('run test:coverage:check');
+      expect(log).not.toMatch(/--reporter=dot|--silent/);
     });
   });
 });

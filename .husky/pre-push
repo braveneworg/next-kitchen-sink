@@ -375,8 +375,13 @@ echo ""
 echo "🧪 Running tests before push..."
 stage="tests + coverage (pnpm run test:coverage:check)"
 
-# Suppress console output during tests to reduce verbosity
-if ! pnpm run test:coverage:check --reporter=dot --silent; then
+# No run-args here. pnpm appends them to the END of the script string, and
+# `test:coverage:check` is `vitest run --coverage && tsx check-coverage-regression.ts`,
+# so `--reporter=dot --silent` landed on the tsx invocation, which ignores
+# unknown argv. The flags never reached vitest and never suppressed anything;
+# they only read like configuration. Verbosity is already handled by
+# `silent: 'passed-only'` in vitest.config.ts.
+if ! pnpm run test:coverage:check; then
   echo ""
   echo "❌ Tests failed. Please fix failing tests before pushing."
   echo "   Run 'pnpm run test' to see all failures."
