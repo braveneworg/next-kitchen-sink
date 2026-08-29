@@ -90,4 +90,13 @@ else
   info "No TypeScript changed, skipping tests."
 fi
 
+# `vitest --changed` diffs the module graph, so a shell script is invisible to
+# it: editing a hook ran none of the specs that cover it. Same blind spot as
+# filtering specs out of the list above, one level out. The hook suite is the
+# slowest thing here, so it runs only when a hook actually changed.
+hooks_changed=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '^\.husky/' | tr '\n' ' ')
+if [ -n "$hooks_changed" ]; then
+  run_gate "hook specs" "pnpm exec vitest run scripts" pnpm exec vitest run scripts
+fi
+
 echo "🎉 Pre-commit checks complete!"
