@@ -1,15 +1,28 @@
 #!/bin/sh
 # Validate commit messages against Conventional Commits + length rules.
-# Config: commitlint.config.js
+# Config: commitlint.config.mjs
 # Skips merge/revert/fixup/squash/amend commits (Git generates these).
 
-COMMIT_MSG_FILE="$1"
-FIRST_LINE=$(sed -n '1p' "$COMMIT_MSG_FILE")
+# Sourced before `$1` is read, which is safe: `.` with no extra arguments leaves
+# the caller's positional parameters alone. The `[ -r ]` test must come first —
+# `.` is a special builtin and exits the shell on a read failure before any
+# `||` on the same line is evaluated.
+hook_lib="$(dirname "$0")/lib.sh"
+[ -r "$hook_lib" ] || {
+  printf '%s\n' "husky: $hook_lib is missing or unreadable — refusing to commit." >&2
+  exit 1
+}
+. "$hook_lib"
 
-case "$FIRST_LINE" in
-  "Merge "*|"Revert "*|"fixup! "*|"squash! "*|"amend! "*)
+commit_msg_file="$1"
+first_line=$(sed -n '1p' "$commit_msg_file")
+
+# Prefix matches, so "Merged the thing" is still linted — only the subjects git
+# writes itself are waved through.
+case "$first_line" in
+  "Merge "* | "Revert "* | "fixup! "* | "squash! "* | "amend! "*)
     exit 0
     ;;
 esac
 
-pnpm exec commitlint --edit "$COMMIT_MSG_FILE"
+run_gate "commitlint" "" pnpm exec commitlint --edit "$commit_msg_file"

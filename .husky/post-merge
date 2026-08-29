@@ -6,15 +6,27 @@
 
 set -e
 
+# `[ -r ]` before `.` — see .husky/lib.sh for why the usual `|| exit 1` idiom
+# does not work with a special builtin.
+hook_lib="$(dirname "$0")/lib.sh"
+[ -r "$hook_lib" ] || {
+  printf '%s\n' "husky: $hook_lib is missing or unreadable — skipping post-merge." >&2
+  exit 1
+}
+. "$hook_lib"
+
 if ! git rev-parse --verify -q HEAD@{1} >/dev/null 2>&1; then
   exit 0
 fi
 
 changed=$(git diff --name-only HEAD@{1} HEAD)
 
+# Anchored on purpose: a lockfile vendored in a subdirectory is not this
+# repository's lockfile. The pipeline's status is grep's, and it sits inside an
+# `if`, so `set -e` does not act on it.
 if printf '%s\n' "$changed" | grep -qE '^(pnpm-lock\.yaml|package\.json)$'; then
-  echo "📦 Lockfile or package.json changed — running pnpm install..."
-  pnpm install
+  info "Lockfile or package.json changed — reinstalling dependencies."
+  run_gate "dependency install" "pnpm install" pnpm install
 fi
 
 exit 0

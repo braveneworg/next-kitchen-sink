@@ -8,17 +8,27 @@
 # already gone. Wrap fallible commands in `if ! some-command; then` instead.
 set -e
 
-# `git branch --show-current` rather than `git rev-parse --abbrev-ref HEAD`:
-# husky runs hooks with `sh -e` (see .husky/_/h), and rev-parse exits 128 on an
-# unborn branch — no HEAD yet — which aborted the hook before any check ran and
-# made the very first commit of a repository impossible. --show-current exits 0
-# and prints the branch name even when no commit exists.
-branch_name=$(git branch --show-current)
-if [ "$branch_name" = "main" ] || [ "$branch_name" = "master" ]; then
-  echo "🚫 You are on the '$branch_name' branch. Commits to this branch are not allowed."
-  echo "⏪ Staged changes are being reset to prevent accidental commits. Please switch to a feature branch and commit your changes there."
-  git reset
+# `[ -r ]` must precede the `.`: a POSIX special builtin exits the shell on a
+# read failure before any `||` on the same line runs, so the familiar
+# `. lib.sh || exit 1` idiom does not work. Fail closed — a missing library
+# means a broken checkout, not a reason to skip the checks.
+hook_lib="$(dirname "$0")/lib.sh"
+[ -r "$hook_lib" ] || {
+  printf '%s\n' "husky: $hook_lib is missing or unreadable — refusing to commit." >&2
   exit 1
+}
+. "$hook_lib"
+
+# `current_branch` keeps using `git branch --show-current` in preference to
+# `git rev-parse --abbrev-ref HEAD`, which exits 128 on an unborn branch and
+# would abort this hook under `set -e` before any check ran.
+branch_name=$(current_branch)
+if is_protected_branch "$branch_name"; then
+  # Reset BEFORE refusing: `refuse` exits, so anything after it is unreachable.
+  git reset
+  refuse "You are on the '$branch_name' branch. Commits to this branch are not allowed." \
+    "Staged changes have been reset to prevent an accidental commit." \
+    "Switch to a feature branch and commit your changes there."
 fi
 
 # NOTE: there is deliberately no `--amend` escape hatch here. There used to be
@@ -28,37 +38,30 @@ fi
 # gate on amend is not obviously wanted anyway: an amend changes the tree.
 
 if [ -z "$(git diff --cached --name-only)" ]; then
-  echo "🚫 No staged changes to commit. Please stage your changes before committing."
-  exit 1
+  refuse "No staged changes to commit." "Stage your changes before committing."
 fi
 
 # Secret scanning (catches AWS keys, JWTs, .env values, private keys, etc.)
 # Install once: `brew install gitleaks` (or see https://github.com/gitleaks/gitleaks)
-echo "🔐 Scanning staged changes for secrets..."
+#
+# Soft-fails when the tool is absent, which is a real hole: pushes are never
+# scanned, so a secret committed on a machine without gitleaks is never caught
+# later. Warning rather than refusing is a deliberate trade-off for contributors
+# who cannot install it.
 if command -v gitleaks >/dev/null 2>&1; then
-  if ! gitleaks protect --staged --redact --no-banner; then
-    echo "❌ gitleaks detected secrets in staged changes. Remove them before committing."
-    echo "   If this is a false positive, see https://github.com/gitleaks/gitleaks#configuration"
-    exit 1
-  fi
-  echo "✅ No secrets detected"
+  run_gate "secret scan" "gitleaks protect --staged --redact" \
+    gitleaks protect --staged --redact --no-banner
 else
-  echo "⚠️  gitleaks not installed — secret scanning skipped."
-  echo "   Install with: brew install gitleaks  (or see https://github.com/gitleaks/gitleaks)"
+  warn "gitleaks not installed — secret scanning skipped." \
+    "Install with: brew install gitleaks  (or see https://github.com/gitleaks/gitleaks)"
 fi
 
-# Linting staged files
-echo "🔍 Running lint-staged..."
-if ! pnpm exec lint-staged; then
-  echo "❌ Linting or compilation failed. Please fix errors before committing."
-  exit 1
-fi
+# One gate, one claim. This previously printed BOTH "Linting staged files
+# passed" and "Type check of staged files passed" unconditionally after a single
+# lint-staged run — and lint-staged only type-checks when a file matching its
+# `src/**/*.{ts,tsx}` entry is staged, so the second banner was routinely false.
+run_gate "lint-staged" "" pnpm exec lint-staged
 
-echo "✅ Linting staged files passed"
-echo "✅ Type check of staged files passed"
-
-# Run tests related to changed files
-echo "🧪 Running tests for changed files..."
 # Spec files are deliberately NOT filtered out here. A commit that touches only
 # specs is exactly the commit whose test behaviour changed, and excluding them
 # made this list empty, so that commit ran no tests at all — the one case where
@@ -68,8 +71,8 @@ echo "🧪 Running tests for changed files..."
 # The trailing `tr` also masks grep's "no match" exit 1, which is load-bearing:
 # under `set -e` an unmasked non-zero here would abort the hook instead of
 # reaching the emptiness check below.
-CHANGED_FILES=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '\.(ts|tsx)$' | tr '\n' ' ')
-if [ -n "$CHANGED_FILES" ]; then
+changed_files=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '\.(ts|tsx)$' | tr '\n' ' ')
+if [ -n "$changed_files" ]; then
   # `--changed HEAD` needs a commit to diff against. On the very first commit
   # there is no HEAD and vitest aborts with "ambiguous argument 'HEAD'" (exit
   # 128), which would make the initial commit impossible. Run the whole suite
@@ -77,17 +80,14 @@ if [ -n "$CHANGED_FILES" ]; then
   if git rev-parse --verify --quiet HEAD >/dev/null 2>&1; then
     vitest_scope="--changed HEAD"
   else
-    echo "ℹ️  No HEAD yet (initial commit) — running the full suite."
+    info "No HEAD yet (initial commit) — running the full suite."
     vitest_scope=""
   fi
-  # Unquoted on purpose: $vitest_scope must word-split into two arguments.
-  if ! pnpm exec vitest run $vitest_scope; then
-    echo "❌ Tests failed. Please fix failing tests before committing."
-    exit 1
-  fi
-  echo "✅ Related tests passed for changed files"
+  # Unquoted on purpose: $vitest_scope must word-split into two arguments before
+  # run_gate receives them, so the command arrives as real argv.
+  run_gate "changed-file tests" "pnpm run test" pnpm exec vitest run $vitest_scope
 else
-  echo "ℹ️  No source files changed, skipping tests"
+  info "No TypeScript changed, skipping tests."
 fi
 
 echo "🎉 Pre-commit checks complete!"

@@ -330,67 +330,41 @@ elif [ -z "$TS_CHANGED" ]; then
   exit 0
 fi
 
-echo "🔍 Running TypeScript type-check before push..."
-stage="TypeScript type-check (pnpm run typecheck)"
+# Each gate is announced, run and judged by `run_gate` (see .husky/lib.sh).
+# These four blocks were previously 14 near-identical lines apiece, and the only
+# information any of them carried beyond the command name was the typecheck
+# rationale below. The command is passed as real argv, so nothing can be
+# appended to it the way `--reporter=dot --silent` once was.
+#
+# `stage` stays inline: it is read by the EXIT trap to name what was running,
+# and its strings are deliberately more specific than the labels.
 
 # `pnpm run typecheck`, not a bare `tsc --noEmit`: typecheck runs `next typegen`
 # first, and PageProps/LayoutProps are generated globals that layout.tsx and
 # page.tsx reference. Calling tsc directly fails on any clone that has not yet
 # run a dev server or build. Invoking the script also keeps this hook and the
 # documented gate from drifting apart.
-if ! pnpm run typecheck; then
-  echo ""
-  echo "❌ TypeScript type-check failed. Please fix type errors before pushing."
-  echo "   Run 'pnpm run typecheck' to see all errors."
-  exit 1
-fi
-
-echo "✅ TypeScript type-check passed"
+stage="TypeScript type-check (pnpm run typecheck)"
+run_gate "TypeScript type-check" "" pnpm run typecheck
 
 echo ""
-echo "🔎 Running oxlint before push..."
 stage="oxlint (pnpm run lint)"
-
-if ! pnpm run lint; then
-  echo ""
-  echo "❌ oxlint found errors or warnings. Please fix them before pushing."
-  echo "   Run 'pnpm run lint' to see all issues."
-  exit 1
-fi
-
-echo "✅ oxlint passed"
+run_gate "oxlint" "" pnpm run lint
 
 echo ""
-echo "🎨 Running Prettier format check before push..."
 stage="Prettier format check (pnpm run format:check)"
-
-if ! pnpm run format:check; then
-  echo ""
-  echo "❌ Prettier found unformatted files. Please run 'pnpm run format' before pushing."
-  echo "   Run 'pnpm run format:check' to see all issues."
-  exit 1
-fi
-
-echo "✅ Prettier format check passed"
+run_gate "Prettier format check" "pnpm run format" pnpm run format:check
 
 echo ""
-echo "🧪 Running tests before push..."
 stage="tests + coverage (pnpm run test:coverage:check)"
-
 # No run-args here. pnpm appends them to the END of the script string, and
 # `test:coverage:check` is `vitest run --coverage && tsx check-coverage-regression.ts`,
 # so `--reporter=dot --silent` landed on the tsx invocation, which ignores
 # unknown argv. The flags never reached vitest and never suppressed anything;
 # they only read like configuration. Verbosity is already handled by
 # `silent: 'passed-only'` in vitest.config.ts.
-if ! pnpm run test:coverage:check; then
-  echo ""
-  echo "❌ Tests failed. Please fix failing tests before pushing."
-  echo "   Run 'pnpm run test' to see all failures."
-  exit 1
-fi
+run_gate "tests" "pnpm run test" pnpm run test:coverage:check
 
-echo "✅ All tests passed"
 echo "🚀 Pushing changes..."
 
 exit 0
