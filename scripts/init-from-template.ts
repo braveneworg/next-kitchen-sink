@@ -27,7 +27,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { type CoverageMetrics, parseThresholdsFromConfig, refreshMetricsContent } from './check-coverage-regression';
+import { type CoverageMetrics, parseThresholdsFromConfig, refreshMetricsContent } from './coverage-gate';
 
 /** Identity of the project being generated, after all fallbacks are applied. */
 export interface ProjectMeta {
