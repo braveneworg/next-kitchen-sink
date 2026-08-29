@@ -10,7 +10,7 @@ Deeper rules: [`src/app/AGENTS.md`](app/AGENTS.md) (UI, forms, styling),
 > `src/lib/validation/`, `src/app/api/`, `src/lib/query-keys.ts`,
 > `@/hooks/query-options` — do **not** ship with the template. They are where
 > this project expects that code to live; create each on first use. Everything
-> else in this guide describes code that is already here.
+> else in this section describes code that is already here.
 
 - Server Components by default; `'use client'` only for interactive
   components. Client Components never call services, instead API routes.
