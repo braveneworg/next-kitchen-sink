@@ -5,7 +5,9 @@ import {
   compareCoverage,
   effectiveFloor,
   evaluateMetric,
+  formatHistoryRow,
   hasImprovement,
+  isHistoryRow,
   parseBaselineMetrics,
   parsePct,
   parseThresholdsFromConfig,
@@ -456,5 +458,64 @@ describe('hasImprovement', () => {
 
   it('is false when a metric only fell', () => {
     expect(hasImprovement(AT_100, { ...AT_100, branches: 99 })).toBe(false);
+  });
+});
+
+describe('the Coverage History row format', () => {
+  const METRICS = { statements: 95, branches: 95, functions: 95, lines: 95 };
+
+  // The point of exporting both halves: whatever the writer emits, the reader
+  // recognises. Two hand-written regexes in two files cannot promise that, and
+  // the pair that used to exist here disagreed — one tolerated `\s*`, the other
+  // demanded literal single spaces.
+  it('recognises a row it just built', () => {
+    expect(isHistoryRow(formatHistoryRow('2027-01-09', METRICS, 'Initialised'))).toBe(true);
+  });
+
+  it('recognises a row after Prettier has aligned it', () => {
+    expect(isHistoryRow('| 2026-08-16 | 100.00%    | 100.00%  | 100.00%   | 100.00% | note |')).toBe(true);
+  });
+
+  it.each([
+    ['a summary-table row', '| Statements | 98.98%   |'],
+    ['the history header', '| Date       | Statements | Branches | Functions | Lines  | Notes |'],
+    ['the separator', '| ---------- | ---------- | -------- | --------- | ------ | ----- |'],
+    ['prose', 'Tracks test coverage for this template.'],
+    ['an empty line', ''],
+  ])('rejects %s', (_label, line) => {
+    expect(isHistoryRow(line)).toBe(false);
+  });
+
+  it('carries the date, all four percentages, and the note', () => {
+    const row = formatHistoryRow('2027-01-09', { statements: 95, branches: 85, functions: 90.5, lines: 99 }, 'Seeded');
+
+    expect(row).toBe('| 2027-01-09 | 95.00% | 85.00% | 90.50% | 99.00% | Seeded |');
+  });
+
+  // A history row must never be mistaken for the summary table. That is now
+  // guaranteed by the section anchor rather than by row shape, so this pins the
+  // belt as well as the braces.
+  it('is not mistaken for a baseline row', () => {
+    const document = [
+      '## Current Coverage Summary',
+      '',
+      '| Statements | 98.98%   |',
+      '| Branches   | 96.01%   |',
+      '| Functions  | 99.17%   |',
+      '| Lines      | 99.39%   |',
+      '',
+      '**Last Updated:** 2026-07-04',
+      '',
+      '## Coverage History',
+      '',
+      formatHistoryRow('2027-01-09', METRICS, 'Seeded'),
+    ].join('\n');
+
+    expect(parseBaselineMetrics(document)).toEqual({
+      statements: 98.98,
+      branches: 96.01,
+      functions: 99.17,
+      lines: 99.39,
+    });
   });
 });

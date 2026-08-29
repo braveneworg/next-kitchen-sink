@@ -622,6 +622,33 @@ export const formatComparison = (comparison: CoverageComparison): readonly Repor
 ];
 
 /**
+ * A Coverage History row — the only rows in COVERAGE_METRICS.md that open with
+ * an ISO date.
+ *
+ * Exported so the writer, the reader and the tests share ONE definition. The
+ * initialiser detected these rows with `\s*`-tolerant whitespace while its spec
+ * re-derived the same rule with literal single spaces, so implementation and
+ * test disagreed about what a history row was: a table Prettier had not yet
+ * aligned matched one and not the other.
+ */
+const HISTORY_ROW = /^\|\s*\d{4}-\d{2}-\d{2}\s*\|/;
+
+export const isHistoryRow = (line: string): boolean => HISTORY_ROW.test(line);
+
+/**
+ * Build one Coverage History row.
+ *
+ * Deliberately unpadded. The previous version hand-counted alignment with
+ * `' '.repeat(4)` / `(2)` / `(3)`, magic numbers tied to the header widths that
+ * nothing checked and that silently rot when a column is renamed. Prettier
+ * formats Markdown tables, and every writer of this file runs it, so column
+ * alignment is not this function's problem.
+ */
+export const formatHistoryRow = (date: string, metrics: CoverageMetrics, note: string): string =>
+  `| ${date} | ${metrics.statements.toFixed(2)}% | ${metrics.branches.toFixed(2)}% | ` +
+  `${metrics.functions.toFixed(2)}% | ${metrics.lines.toFixed(2)}% | ${note} |`;
+
+/**
  * Rewrite the Current Coverage Summary percentages and the Last Updated date,
  * returning the whole document with only that section changed.
  *
