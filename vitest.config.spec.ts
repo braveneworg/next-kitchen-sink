@@ -91,6 +91,49 @@ describe('coverage.include', () => {
   });
 });
 
+describe('coverage.exclude', () => {
+  it('has no duplicate entries', () => {
+    const exclude = resolveExclude();
+    const duplicates = exclude.filter((entry, index) => exclude.indexOf(entry) !== index);
+
+    expect(duplicates).toEqual([]);
+  });
+
+  /**
+   * Globs that match nothing in the tree today and are kept anyway, because the
+   * thing they guard against is a file someone is likely to add tomorrow.
+   * Anything NOT listed here has to earn its place by removing a real file.
+   */
+  const GUARD_GLOBS: ReadonlySet<string> = new Set([
+    // `src/**/*.{ts,tsx}` matches a `.d.ts`, and an ambient declaration has no
+    // executable statements to cover — it would land in the report as an
+    // unfixable 0%.
+    '**/*.d.ts',
+    // `src/types/**` is where type-only modules go. Same reasoning as above,
+    // pre-empted for the directory rather than the extension.
+    '**/types/**',
+  ]);
+
+  // `coverage.include` is `src/**/*.{ts,tsx}` and Vitest 4's
+  // `coverageConfigDefaults.exclude` is `[]`, so nothing is inherited: an entry
+  // that cannot match a `.ts`/`.tsx` file under `src/` excludes nothing from
+  // anything. Such entries read as protection that isn't there.
+  it('contains no entry that neither removes a file nor guards a future one', () => {
+    const include = [...resolveInclude()];
+    const everySourceFile = globSync(include, { cwd: REPO_ROOT });
+
+    const inert = resolveExclude().filter((entry) => {
+      if (GUARD_GLOBS.has(entry)) {
+        return false;
+      }
+
+      return globSync(include, { cwd: REPO_ROOT, exclude: [entry] }).length === everySourceFile.length;
+    });
+
+    expect(inert).toEqual([]);
+  });
+});
+
 describe('the measured source set', () => {
   // Pinned deliberately. Adding a source file under `src/` puts it here, and a
   // new file with no spec drags the headline number down — that should be a
