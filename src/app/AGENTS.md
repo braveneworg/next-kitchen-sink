@@ -1,7 +1,11 @@
-# src/app/ — UI: components, forms, styling
+# src/app/ and src/components/ — UI: components, forms, styling
 
 Read with [`src/AGENTS.md`](../AGENTS.md). Load `docs/lessons/react-nextjs/`
 before UI or bundling work.
+
+These rules cover both directories. Routes, layouts and pages live in
+`src/app/`; every component lives in `src/components/`, outside the App Router
+so that nothing under `app/` is anything but routing.
 
 ## Components
 
@@ -21,7 +25,7 @@ before UI or bundling work.
 ## Forms
 
 - React Hook Form + Zod via `zodResolver`. Check
-  `src/app/components/**/*` for an existing field before building one.
+  `src/components/**/*` for an existing field before building one.
 
 ## Styling & accessibility
 

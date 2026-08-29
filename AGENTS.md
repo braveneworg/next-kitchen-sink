@@ -54,11 +54,11 @@ never preload everything.
 
 Before working under a directory, read its `AGENTS.md`:
 
-| File                                     | Covers                                                              |
-| ---------------------------------------- | ------------------------------------------------------------------- |
-| [`src/AGENTS.md`](src/AGENTS.md)         | Architecture, TypeScript rules, data fetching, unit testing, naming |
-| [`src/app/AGENTS.md`](src/app/AGENTS.md) | Components, forms, styling, accessibility, performance              |
-| [`src/lib/AGENTS.md`](src/lib/AGENTS.md) | Server Actions, repositories, services, validation, decorators      |
+| File                                     | Covers                                                                                |
+| ---------------------------------------- | ------------------------------------------------------------------------------------- |
+| [`src/AGENTS.md`](src/AGENTS.md)         | Architecture, TypeScript rules, data fetching, unit testing, naming                   |
+| [`src/app/AGENTS.md`](src/app/AGENTS.md) | Components, forms, styling, accessibility, performance — covers `src/components/` too |
+| [`src/lib/AGENTS.md`](src/lib/AGENTS.md) | Server Actions, repositories, services, validation, decorators                        |
 
 ## Lessons (load on demand)
 

@@ -20,10 +20,10 @@
     ],
     "paths": {
       "@/*": ["./src/*"],
-      "@/components/*": ["./src/app/components/*"],
+      "@/components/*": ["./src/components/*"],
       "@/lib/*": ["./src/lib/*"],
       "@/utils/*": ["./src/lib/utils/*"],
-      "@/ui/*": ["./src/app/components/ui/*"],
+      "@/ui/*": ["./src/components/ui/*"],
       "@/hooks/*": ["./src/hooks/*"]
     },
     "types": ["vitest/globals", "node"]
