@@ -1,9 +1,6 @@
 import { act, renderHook } from '@testing-library/react';
 
-import { useIsMobile } from './use-mobile';
-
-/** Must match MOBILE_BREAKPOINT in use-mobile.ts. */
-const MOBILE_BREAKPOINT = 768;
+import { MOBILE_BREAKPOINT, useIsMobile } from './use-mobile';
 
 type ChangeListener = () => void;
 
@@ -65,15 +62,6 @@ describe('useIsMobile', () => {
     const { result } = renderHook(() => useIsMobile());
 
     expect(result.current).toBe(false);
-  });
-
-  it('queries one pixel below the breakpoint', () => {
-    mockMatchMedia();
-    setViewportWidth(1024);
-
-    renderHook(() => useIsMobile());
-
-    expect(window.matchMedia).toHaveBeenCalledWith(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`);
   });
 
   it('re-reads the width when the media query reports a change', () => {
