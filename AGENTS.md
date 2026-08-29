@@ -150,7 +150,18 @@ pnpm run format               # Prettier write (format:check = no write)
   autonomously.
 - Husky: **pre-commit** blocks `main`, runs gitleaks, lint-staged, and
   `vitest --changed`; **pre-push** requires up-to-date with `origin/main`,
-  rejects WIP/`fixup!` commits, runs `tsc --noEmit`, and lint; **post-merge** reinstalls deps
+  rejects WIP/`fixup!` commits, then runs the full gate — `pnpm run typecheck`,
+  `lint`, `format:check`, and `test:coverage:check`; **commit-msg** runs
+  commitlint; **post-merge** reinstalls deps when the lockfile moved.
+- Shared hook machinery lives in `.husky/lib.sh`, sourced by all four hooks.
+  Add a gate with `run_gate <label> <remedy> <cmd…>` rather than a fresh
+  `if ! …; then echo; exit 1; fi` block, and give any multi-outcome helper
+  named tokens instead of exit codes.
+  See `docs/lessons/tooling/shell-helpers-answer-in-tokens.md`.
+- The staged gate covers exactly what `lint-staged.config.mjs` globs. New
+  directories of code need an entry, or they are committed unlinted while the
+  hook still reports success.
+  See `docs/lessons/tooling/lint-staged-globs-decide-the-staged-gate.md`.
 
 ## Conventions
 
