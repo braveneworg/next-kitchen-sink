@@ -179,7 +179,11 @@ describe('the coverage gate against a real child run', () => {
       const status = runFixtureVitest(fixtureDir);
       const summary = readFixtureSummary(fixtureDir);
 
-      expect(status).not.toBe(0);
+      // `toBe(1)`, not `not.toBe(0)`: vitest exits 1 when thresholds are unmet,
+      // and a looser assertion would also be satisfied by the fixture failing
+      // to build or the child crashing — which is exactly how an earlier
+      // version of this spec passed while reporting 0/0 statements.
+      expect(status).toBe(1);
       expect(uncoveredEntry(summary)?.statements.pct).toBe(0);
       expect(summary.total.statements.pct).toBeLessThan(100);
     },

@@ -27,7 +27,13 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { type CoverageMetrics, parseThresholdsFromConfig, refreshMetricsContent } from './coverage-gate';
+import {
+  type CoverageMetrics,
+  formatHistoryRow,
+  isHistoryRow,
+  parseThresholdsFromConfig,
+  refreshMetricsContent,
+} from './coverage-gate';
 
 /** Identity of the project being generated, after all fallbacks are applied. */
 export interface ProjectMeta {
@@ -333,19 +339,16 @@ export const rewriteCoverageMetrics = (
     `Tracks test coverage for **${meta.name}**.`
   );
 
-  const seedRow =
-    `| ${today} | ${thresholds.statements.toFixed(2)}%${' '.repeat(4)} | ` +
-    `${thresholds.branches.toFixed(2)}%${' '.repeat(2)} | ` +
-    `${thresholds.functions.toFixed(2)}%${' '.repeat(3)} | ` +
-    `${thresholds.lines.toFixed(2)}% | Initialised from template thresholds |`;
+  const seedRow = formatHistoryRow(today, thresholds, 'Initialised from template thresholds');
 
   const lines = withBaseline.split('\n');
   const output: string[] = [];
   let seeded = false;
 
   for (const line of lines) {
-    // History rows are the only ones that open with an ISO date.
-    if (/^\|\s*\d{4}-\d{2}-\d{2}\s*\|/.test(line)) {
+    // `isHistoryRow` rather than a local regex: this file and its spec used to
+    // carry two non-equivalent copies of the rule.
+    if (isHistoryRow(line)) {
       if (!seeded) {
         output.push(seedRow);
         seeded = true;

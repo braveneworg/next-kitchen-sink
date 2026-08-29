@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { isHistoryRow } from './coverage-gate';
 import {
   buildProjectMeta,
   isPrettierFormattable,
@@ -469,10 +470,13 @@ describe('rewriteCoverageMetrics', () => {
 
   // The template's history rows describe the template's own past, which is not
   // this project's past. One seeded row keeps the table's shape valid.
+  //
+  // Filtered with the implementation's own `isHistoryRow`, not a copy of the
+  // rule: this spec used to re-derive it with literal single spaces where the
+  // implementation allowed `\s*`, so the two disagreed about what counted as a
+  // history row and the test could pass on output the code would mishandle.
   it('replaces the coverage history with a single seed row', () => {
-    const historyRows = result()
-      .split('\n')
-      .filter((line) => /^\| \d{4}-\d{2}-\d{2} \|/.test(line));
+    const historyRows = result().split('\n').filter(isHistoryRow);
 
     expect(historyRows).toHaveLength(1);
     expect(historyRows[0]).toContain('2027-01-09');
