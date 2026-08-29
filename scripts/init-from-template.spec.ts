@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import {
   buildProjectMeta,
   isPrettierFormattable,
@@ -172,6 +175,27 @@ describe('rewritePackageJson', () => {
     const { author } = JSON.parse(rewritePackageJson(source, { ...META, author: '' }));
 
     expect(author).toBe('Michaux Kelley <me@mkelley33.com>');
+  });
+});
+
+describe('stripLessonLinks against the real documents', () => {
+  // The whole LINE carrying a lesson link is removed, so a link has to be a
+  // self-contained sentence. Appending one to the end of a prose sentence —
+  // "…give helpers named tokens — see \n  `docs/lessons/…md`." — leaves the
+  // front half dangling in every generated project. These are the two files
+  // `main()` runs stripLessonLinks over.
+  it.each(['AGENTS.md', 'README.md', 'lint-staged.config.mjs'])('leaves no dangling connector in %s', (file) => {
+    const lines = readFileSync(join(import.meta.dirname, '..', file), 'utf-8').split('\n');
+
+    // Checked against the line BEFORE each link rather than the stripped
+    // output: ordinary wrapped prose ends with an em-dash all the time, and
+    // only a continuation into a line that is about to be deleted matters.
+    const orphaned = lines.filter(
+      (line, index) =>
+        /docs\/lessons\/[^\s)`]+\.md/.test(line) && /(?:[—–-]|\bsee|\bin|\bat)\s*$/i.test(lines.at(index - 1) ?? '')
+    );
+
+    expect(orphaned).toEqual([]);
   });
 });
 

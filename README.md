@@ -173,13 +173,16 @@ check there before adding anything.
   `type(scope): <gitmoji> subject`. Header ≤50 characters, body and footer lines ≤72. commitlint enforces this in the
   `commit-msg` hook.
 - **Git hooks** (Husky): `pre-commit` blocks commits to `main`, scans for secrets, runs lint-staged and tests for
-  changed files; `pre-push` requires the branch to be current with `origin/main`, rejects WIP commits, and runs
-  typecheck plus lint; `post-merge` reinstalls dependencies.
+  changed files; `pre-push` requires the branch to be current with `origin/main`, rejects WIP commits, and runs the
+  full gate (typecheck, lint, format check, tests plus the coverage regression check); `post-merge` reinstalls
+  dependencies when the lockfile or `package.json` moved. Machinery shared between the four lives in
+  [`.husky/lib.sh`](.husky/lib.sh), and each hook's behaviour is covered by a spec in [`scripts/`](scripts).
 - **Imports** are sorted automatically by `simple-import-sort` — run `pnpm run lint`, never hand-sort.
 - **Tests** are written first. Every feature and bug fix ships with them.
 - **lint-staged** is configured in [`lint-staged.config.mjs`](lint-staged.config.mjs), not `package.json`. Its
   TypeScript entry must stay a function — lint-staged appends staged filenames to string commands, and passing input
-  files to `tsc` makes it ignore `tsconfig.json` and pass on code the build rejects.
+  files to `tsc` makes it ignore `tsconfig.json` and pass on code the build rejects. Its globs are also the whole of
+  what the staged gate covers: a directory with no entry is committed unlinted, so add one when you add code.
 
 Full contributor and AI-agent guidelines live in [`AGENTS.md`](AGENTS.md), with per-directory guides in
 [`src/AGENTS.md`](src/AGENTS.md), [`src/app/AGENTS.md`](src/app/AGENTS.md), and [`src/lib/AGENTS.md`](src/lib/AGENTS.md).
