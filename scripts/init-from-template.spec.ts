@@ -1,9 +1,12 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 
 import { isHistoryRow } from './coverage-gate';
 import {
   buildProjectMeta,
+  buildRewrites,
+  createFileOps,
   isPrettierFormattable,
   parseArgs,
   parseRepoName,
@@ -482,5 +485,157 @@ describe('rewriteCoverageMetrics', () => {
     expect(historyRows[0]).toContain('2027-01-09');
     expect(historyRows[0]).toMatch(/95\.00%/);
     expect(historyRows[0]).toMatch(/Initialised from template/i);
+  });
+});
+
+describe('buildRewrites', () => {
+  const THRESHOLDS = { statements: 95, branches: 85, functions: 90, lines: 92 };
+
+  // The manifest used to be a literal inside `main`, so "which files does this
+  // script touch?" was only answerable by running it. It is data now.
+  it('names every file it will rewrite, in order', () => {
+    expect(buildRewrites(META, THRESHOLDS, '2027-01-09').map(([file]) => file)).toEqual([
+      'package.json',
+      'README.md',
+      'LICENSE',
+      'COVERAGE_METRICS.md',
+      'AGENTS.md',
+      'lint-staged.config.mjs',
+    ]);
+  });
+
+  // Each transform's own behaviour is covered above; what matters here is that
+  // the manifest pairs every file with one, and that reading the manifest
+  // touches no disk.
+  it('pairs every file with a transform', () => {
+    const transforms = buildRewrites(META, THRESHOLDS, '2027-01-09').map(([, transform]) => typeof transform);
+
+    expect(transforms).toEqual(['function', 'function', 'function', 'function', 'function', 'function']);
+  });
+
+  it('threads the thresholds into the coverage transform', () => {
+    const entry = buildRewrites(META, THRESHOLDS, '2027-01-09').find(([file]) => file === 'COVERAGE_METRICS.md');
+    const source = ['## Current Coverage Summary', '', '| Statements | 12.00% |', '', '## Coverage History', ''].join(
+      '\n'
+    );
+
+    expect(entry?.[1](source)).toContain('95.00%');
+  });
+});
+
+describe('createFileOps', () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'file-ops-'));
+  });
+
+  afterEach(() => {
+    rmSync(root, { force: true, recursive: true });
+  });
+
+  const seed = (relativePath: string, contents: string): void => {
+    const target = join(root, relativePath);
+
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, contents);
+  };
+
+  const read = (relativePath: string): string => readFileSync(join(root, relativePath), 'utf-8');
+
+  describe('rewrite', () => {
+    it('writes the transformed content', () => {
+      seed('README.md', 'old');
+
+      createFileOps(root, false).rewrite('README.md', () => 'new');
+
+      expect(read('README.md')).toBe('new');
+    });
+
+    // The flag the README tells users to preview with, and previously the only
+    // thing tested about it was that parseArgs recognised the token.
+    it('leaves the file alone on a dry run', () => {
+      seed('README.md', 'old');
+
+      createFileOps(root, true).rewrite('README.md', () => 'new');
+
+      expect(read('README.md')).toBe('old');
+    });
+
+    it('records the action on a dry run all the same', () => {
+      seed('README.md', 'old');
+
+      const ops = createFileOps(root, true);
+      ops.rewrite('README.md', () => 'new');
+
+      expect(ops.actions()).toEqual([{ applied: true, kind: 'rewrite', path: 'README.md' }]);
+    });
+
+    it('skips a file that is not there and says so', () => {
+      const ops = createFileOps(root, false);
+      ops.rewrite('MISSING.md', () => 'new');
+
+      expect(ops.actions()).toEqual([{ applied: false, kind: 'rewrite', path: 'MISSING.md' }]);
+    });
+  });
+
+  describe('remove', () => {
+    it('deletes the file', () => {
+      seed('scripts/init.ts', 'x');
+
+      createFileOps(root, false).remove('scripts/init.ts');
+
+      expect(existsSync(join(root, 'scripts/init.ts'))).toBe(false);
+    });
+
+    it('leaves the file alone on a dry run', () => {
+      seed('scripts/init.ts', 'x');
+
+      createFileOps(root, true).remove('scripts/init.ts');
+
+      expect(existsSync(join(root, 'scripts/init.ts'))).toBe(true);
+    });
+
+    it('records nothing for a file that was already absent', () => {
+      const ops = createFileOps(root, false);
+      ops.remove('scripts/gone.ts');
+
+      expect(ops.actions()).toEqual([]);
+    });
+  });
+
+  describe('removeDirectory', () => {
+    it('deletes the directory and its contents', () => {
+      seed('docs/lessons/tooling/one.md', 'x');
+
+      createFileOps(root, false).removeDirectory('docs/lessons');
+
+      expect(existsSync(join(root, 'docs/lessons'))).toBe(false);
+    });
+
+    it('prunes the parent when nothing else lived there', () => {
+      seed('docs/lessons/tooling/one.md', 'x');
+
+      createFileOps(root, false).removeDirectory('docs/lessons');
+
+      expect(existsSync(join(root, 'docs'))).toBe(false);
+    });
+
+    it('keeps a parent that still holds something', () => {
+      seed('docs/lessons/tooling/one.md', 'x');
+      seed('docs/adr/0001.md', 'x');
+
+      createFileOps(root, false).removeDirectory('docs/lessons');
+
+      expect(existsSync(join(root, 'docs/adr/0001.md'))).toBe(true);
+    });
+
+    it('leaves everything in place on a dry run', () => {
+      seed('docs/lessons/tooling/one.md', 'x');
+
+      createFileOps(root, true).removeDirectory('docs/lessons');
+
+      expect(existsSync(join(root, 'docs/lessons/tooling/one.md'))).toBe(true);
+    });
   });
 });

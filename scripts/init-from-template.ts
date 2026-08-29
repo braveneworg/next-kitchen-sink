@@ -468,29 +468,101 @@ const SELF_FILES = ['scripts/init-from-template.ts', 'scripts/init-from-template
  */
 const LESSONS_DIR = 'docs/lessons';
 
+/** One filesystem effect the initialiser performed, or would have on a dry run. */
+export interface FileAction {
+  kind: 'rewrite' | 'remove';
+  /** Path relative to the project root. */
+  path: string;
+  /** False when the target was absent, so nothing happened. */
+  applied: boolean;
+}
+
+/** Every way this script touches disk, and the one place `--dry-run` means something. */
+export interface FileOps {
+  rewrite: (relativePath: string, transform: (content: string) => string) => void;
+  remove: (relativePath: string) => void;
+  removeDirectory: (relativePath: string) => void;
+  /** What was done, in order. The log a caller — or a test — can assert against. */
+  actions: () => readonly FileAction[];
+}
+
 /**
- * Delete the lessons directory, and `docs/` too if nothing else lived there.
+ * Build the initialiser's filesystem layer.
+ *
+ * This replaced three functions with one shape — an `existsSync` guard, an
+ * `if (!dryRun)` branch and an emoji log — which meant "what does --dry-run
+ * mean?" was answered in three places and tested in none, including the flag
+ * the README tells users to preview with.
  *
  * @param root Absolute path to the project root.
- * @param dryRun When true, nothing is deleted.
+ * @param dryRun When true, every effect is reported and none is performed.
  */
-const removeLessons = (root: string, dryRun: boolean): void => {
-  const lessonsPath = path.join(root, LESSONS_DIR);
+export const createFileOps = (root: string, dryRun: boolean): FileOps => {
+  const performed: FileAction[] = [];
+  const icon = (done: string): string => (dryRun ? '👀' : done);
 
-  if (!fs.existsSync(lessonsPath)) {
-    return;
-  }
+  const record = (kind: FileAction['kind'], relativePath: string, applied: boolean): void => {
+    performed.push({ applied, kind, path: relativePath });
+  };
 
-  if (!dryRun) {
-    fs.rmSync(lessonsPath, { recursive: true });
+  const rewrite = (relativePath: string, transform: (content: string) => string): void => {
+    const absolutePath = path.join(root, relativePath);
 
-    const docsPath = path.dirname(lessonsPath);
-    if (fs.readdirSync(docsPath).length === 0) {
-      fs.rmSync(docsPath, { recursive: true });
+    if (!fs.existsSync(absolutePath)) {
+      console.warn(`⚠️  ${relativePath} not found — skipped.`);
+      record('rewrite', relativePath, false);
+      return;
     }
-  }
 
-  console.info(`${dryRun ? '👀' : '🗑️ '} ${LESSONS_DIR}/ (removed)`);
+    const rewritten = transform(fs.readFileSync(absolutePath, 'utf-8'));
+
+    if (!dryRun) {
+      fs.writeFileSync(absolutePath, rewritten);
+    }
+
+    record('rewrite', relativePath, true);
+    console.info(`${icon('✏️ ')} ${relativePath}`);
+  };
+
+  const remove = (relativePath: string): void => {
+    const absolutePath = path.join(root, relativePath);
+
+    if (!fs.existsSync(absolutePath)) {
+      return;
+    }
+
+    if (!dryRun) {
+      fs.rmSync(absolutePath);
+    }
+
+    record('remove', relativePath, true);
+    console.info(`${icon('🗑️ ')} ${relativePath} (removed)`);
+  };
+
+  // Prunes the parent too when nothing else lived there — `docs/` exists only
+  // to hold `docs/lessons/` in this template, and an empty `docs/` in a
+  // generated project is a leftover, not a convention.
+  const removeDirectory = (relativePath: string): void => {
+    const absolutePath = path.join(root, relativePath);
+
+    if (!fs.existsSync(absolutePath)) {
+      return;
+    }
+
+    if (!dryRun) {
+      fs.rmSync(absolutePath, { recursive: true });
+
+      const parent = path.dirname(absolutePath);
+      if (fs.readdirSync(parent).length === 0) {
+        fs.rmSync(parent, { recursive: true });
+      }
+    }
+
+    record('remove', relativePath, true);
+    console.info(`${icon('🗑️ ')} ${relativePath}/ (removed)`);
+  };
+
+  return { actions: () => performed, remove, removeDirectory, rewrite };
 };
 
 /** The template's own name — refusing it is what stops a no-op initialisation. */
@@ -535,52 +607,24 @@ const resolveMeta = (flags: Map<string, string>, root: string): ProjectMeta => {
 };
 
 /**
- * Apply each rewrite in turn, reporting what was touched.
+ * The manifest: which files get rewritten, and by what.
  *
- * @param root Absolute path to the project root.
- * @param rewrites The files and their transforms.
- * @param dryRun When true, nothing is written.
- */
-const applyRewrites = (root: string, rewrites: readonly Rewrite[], dryRun: boolean): void => {
-  for (const [relativePath, transform] of rewrites) {
-    const absolutePath = path.join(root, relativePath);
-
-    if (!fs.existsSync(absolutePath)) {
-      console.warn(`⚠️  ${relativePath} not found — skipped.`);
-      continue;
-    }
-
-    const rewritten = transform(fs.readFileSync(absolutePath, 'utf-8'));
-
-    if (!dryRun) {
-      fs.writeFileSync(absolutePath, rewritten);
-    }
-
-    console.info(`${dryRun ? '👀' : '✏️ '} ${relativePath}`);
-  }
-};
-
-/**
- * Delete this script and its spec, so the generated project carries no bootstrap.
+ * Data rather than a literal buried in `main`, so "what does this script
+ * touch?" is answerable — and assertable — without running it.
  *
- * @param root Absolute path to the project root.
- * @param dryRun When true, nothing is deleted.
+ * @param meta Resolved project identity.
+ * @param thresholds Coverage thresholds parsed from vitest.config.ts.
+ * @param today ISO date stamped into the rewritten files.
  */
-const removeSelf = (root: string, dryRun: boolean): void => {
-  for (const relativePath of SELF_FILES) {
-    const absolutePath = path.join(root, relativePath);
-
-    if (!fs.existsSync(absolutePath)) {
-      continue;
-    }
-
-    if (!dryRun) {
-      fs.rmSync(absolutePath);
-    }
-
-    console.info(`${dryRun ? '👀' : '🗑️ '} ${relativePath} (removed)`);
-  }
-};
+export const buildRewrites = (meta: ProjectMeta, thresholds: CoverageMetrics, today: string): readonly Rewrite[] => [
+  ['package.json', (content) => rewritePackageJson(content, meta)],
+  ['README.md', (content) => stripLessonLinks(rewriteReadme(content, meta))],
+  ['LICENSE', (content) => rewriteLicense(content, meta)],
+  ['COVERAGE_METRICS.md', (content) => rewriteCoverageMetrics(content, meta, thresholds, today)],
+  // The other two files carrying a deep link into the lessons directory.
+  ['AGENTS.md', stripLessonLinks],
+  ['lint-staged.config.mjs', stripLessonLinks],
+];
 
 /**
  * Hand the rewritten files to Prettier, which owns their final formatting.
@@ -619,15 +663,8 @@ const main = (): void => {
   const today = new Date().toISOString().split('T')[0];
   const thresholds = parseThresholdsFromConfig(fs.readFileSync(path.join(root, 'vitest.config.ts'), 'utf-8'));
 
-  const rewrites: Rewrite[] = [
-    ['package.json', (content) => rewritePackageJson(content, meta)],
-    ['README.md', (content) => stripLessonLinks(rewriteReadme(content, meta))],
-    ['LICENSE', (content) => rewriteLicense(content, meta)],
-    ['COVERAGE_METRICS.md', (content) => rewriteCoverageMetrics(content, meta, thresholds, today)],
-    // The other two files carrying a deep link into the lessons directory.
-    ['AGENTS.md', stripLessonLinks],
-    ['lint-staged.config.mjs', stripLessonLinks],
-  ];
+  const rewrites = buildRewrites(meta, thresholds, today);
+  const files = createFileOps(root, dryRun);
 
   console.info(`   name:        ${meta.name}`);
   console.info(`   description: ${meta.description}`);
@@ -636,9 +673,15 @@ const main = (): void => {
     `   baseline:    ${thresholds.statements}/${thresholds.branches}/${thresholds.functions}/${thresholds.lines}\n`
   );
 
-  applyRewrites(root, rewrites, dryRun);
-  removeLessons(root, dryRun);
-  removeSelf(root, dryRun);
+  for (const [relativePath, transform] of rewrites) {
+    files.rewrite(relativePath, transform);
+  }
+
+  files.removeDirectory(LESSONS_DIR);
+
+  for (const relativePath of SELF_FILES) {
+    files.remove(relativePath);
+  }
 
   if (dryRun) {
     console.info('\n👀 Dry run — nothing was written.\n');
