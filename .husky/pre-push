@@ -4,6 +4,24 @@
 # its own exit codes explicitly.
 set +e
 
+# Sourced before anything else. The library performs no IO at source time — it
+# only defines functions — so its position relative to the fd juggling below
+# does not affect where its output lands; what matters is where its functions
+# are CALLED. Sourcing here makes the diagnostic vocabulary available to the
+# stdin-parsing prelude, which currently has no way to report anything.
+#
+# The `[ -r ]` test must precede the `.`: `.` is a POSIX special builtin, so a
+# non-interactive shell exits on a read failure before any `||` on the same line
+# is evaluated. Fail closed — a missing lib.sh means a broken checkout, and a
+# hook that silently no-ops in that state is the exact silent-pass shape this
+# repo has three lessons about.
+hook_lib="$(dirname "$0")/lib.sh"
+[ -r "$hook_lib" ] || {
+  printf '%s\n' "husky: $hook_lib is missing or unreadable — refusing to push." >&2
+  exit 1
+}
+. "$hook_lib"
+
 # Log file for diagnostics (failures during `git push` can swallow hook stderr).
 log_file="${TMPDIR:-/tmp}/husky-pre-push.log"
 : > "$log_file"
@@ -120,18 +138,11 @@ trap cleanup EXIT INT TERM
 echo ""
 echo "===== pre-push hook started at $(date) ====="
 
-# Reports what "<remote>" holds. Exit codes: 0 the remote answered and has NO
-# refs at all, 1 it has at least one, 2 it could not be reached. `git ls-remote`
-# prints one line per ref, so empty output with a zero status is an unseeded
-# repository — and only that, which is why a reachability failure gets its own
-# code rather than being folded in as "looks empty".
-remote_ref_state() {
-  if ! remote_refs=$(git ls-remote "$1" 2>/dev/null); then
-    return 2
-  fi
-  [ -z "$remote_refs" ] && return 0
-  return 1
-}
+# `remote_state` now lives in .husky/lib.sh, next to `fetch_branch`. The two
+# used to sit 80 lines apart here with opposite numeric conventions — 1 meant
+# "has refs" in one and "network failure" in the other — which is the recurring
+# class docs/lessons/git-workflow/pre-push-deadlocked-a-fresh-remote.md names.
+# They answer in named tokens now, which cannot be transposed.
 
 # Prevent pushing directly to main or master branches. The one exception is
 # seeding an *entirely unseeded* remote, which would otherwise have no legal
@@ -145,19 +156,25 @@ remote_ref_state() {
 # (which is free) so an ordinary accidental push to main is still rejected
 # without paying for a network round trip.
 stage="branch protection"
-branch_name=$(git rev-parse --abbrev-ref HEAD)
-if [ "$branch_name" = "main" ] || [ "$branch_name" = "master" ]; then
+# `current_branch`, not `git rev-parse --abbrev-ref HEAD`. The comment at
+# .husky/pre-commit:11-15 spells out why rev-parse is wrong here — it exits 128
+# on an unborn branch — and this hook used exactly the call that comment
+# forbids. The library keeps rev-parse only as a fallback, so a detached HEAD
+# still reports "HEAD" and the messages below read the same.
+branch_name=$(current_branch)
+if is_protected_branch "$branch_name"; then
   seeding_allowed=0
   if [ "$seeding_push" = "1" ]; then
-    remote_ref_state "$push_remote"
-    case $? in
-      0) seeding_allowed=1 ;;
-      2)
+    # The `*)` arm is deliberately the strict one: a token this hook does not
+    # recognise must fail closed, not fall through to "allowed".
+    case "$(remote_state "$push_remote")" in
+      empty) seeding_allowed=1 ;;
+      populated) : ;;
+      *)
         # Never let an unreachable remote read as an unseeded one — that would
         # turn a network blip into an unlocked main.
-        echo "❌ Could not reach '$push_remote' to check whether it is unseeded."
-        echo "   Please check your network connection and try again."
-        exit 1
+        fail "Could not reach '$push_remote' to check whether it is unseeded." \
+          "Please check your network connection and try again."
         ;;
     esac
   fi
@@ -165,8 +182,7 @@ if [ "$branch_name" = "main" ] || [ "$branch_name" = "master" ]; then
   if [ "$seeding_allowed" = "1" ]; then
     echo "🌱 '$push_remote' has no refs at all — allowing this push to seed it."
   else
-    echo "🚫 You are on the '$branch_name' branch. Pushing directly to this branch is not allowed."
-    exit 1
+    refuse "You are on the '$branch_name' branch. Pushing directly to this branch is not allowed."
   fi
 fi
 
@@ -205,21 +221,8 @@ if [ "$commits_ahead" = "0" ]; then
   exit 0
 fi
 
-# Fetches "<remote> <branch>". Exit codes: 0 fetched, 2 the remote answered but
-# has no such branch, 1 a genuine network/auth failure. A bare `git fetch`
-# cannot tell the last two apart, so ls-remote arbitrates: its --exit-code
-# returns exactly 2 for "reachable, no matching ref", and anything else non-zero
-# for a connection or auth problem.
-fetch_sync_ref() {
-  if git fetch "$1" "$2" --quiet; then
-    return 0
-  fi
-  git ls-remote --exit-code "$1" "refs/heads/$2" >/dev/null 2>&1
-  if [ "$?" -eq 2 ]; then
-    return 2
-  fi
-  return 1
-}
+# `fetch_branch` lives in .husky/lib.sh — see the note beside the branch check
+# above for why both remote helpers moved there together.
 
 # Fetch the sync ref so the comparisons below are against the latest remote
 # state. For first-push branches this fetches origin/main; for tracked
@@ -228,38 +231,37 @@ fetch_sync_ref() {
 # against fresh remote state rather than a stale local copy of it.
 stage="fetch $sync_ref"
 no_baseline=0
-fetch_sync_ref "$sync_remote" "$sync_branch"
-fetch_rc=$?
+fetch_state=$(fetch_branch "$sync_remote" "$sync_branch")
 
-if [ "$fetch_rc" = "2" ] && [ "$has_upstream" = "1" ]; then
+if [ "$fetch_state" = "absent" ] && [ "$has_upstream" = "1" ]; then
   # The branch we track no longer exists remotely (commonly: it was merged and
   # the remote branch tidied up), so there's nothing to be "behind" — push to
   # re-create it. Keep the safety checks by falling back to comparing against
   # origin/main, exactly like a brand-new branch.
-  echo "ℹ️  Upstream '$sync_ref' no longer exists on '$sync_remote' (branch deleted)."
-  echo "   Falling back to 'origin/main' and pushing to re-create the branch."
+  info "Upstream '$sync_ref' no longer exists on '$sync_remote' (branch deleted)." \
+    "Falling back to 'origin/main' and pushing to re-create the branch."
   has_upstream=0
   sync_ref="origin/main"
   sync_remote="origin"
   sync_branch="main"
   stage="fetch $sync_ref"
-  fetch_sync_ref "$sync_remote" "$sync_branch"
-  fetch_rc=$?
+  fetch_state=$(fetch_branch "$sync_remote" "$sync_branch")
 fi
 
-case "$fetch_rc" in
-  0) ;;
-  2)
+# `*)` is the strict arm on purpose — an unrecognised token must fail the push
+# rather than be read as a successful fetch.
+case "$fetch_state" in
+  fetched) ;;
+  absent)
     # The remote is reachable but has no such branch — an empty repository, or
     # one whose main has yet to be seeded. There is no baseline to measure this
     # push against, so the sync comparisons are skipped below and the full gate
     # runs in place of the changed-files shortcut.
     no_baseline=1
-    echo "ℹ️  '$sync_ref' does not exist on '$sync_remote' yet — nothing to compare against."
+    info "'$sync_ref' does not exist on '$sync_remote' yet — nothing to compare against."
     ;;
   *)
-    echo "❌ Failed to fetch latest changes from $sync_ref. Please check your network connection and try again."
-    exit 1
+    fail "Failed to fetch latest changes from $sync_ref." "Please check your network connection and try again."
     ;;
 esac
 
