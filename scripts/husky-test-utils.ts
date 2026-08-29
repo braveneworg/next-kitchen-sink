@@ -86,7 +86,7 @@ export const restrictedPath = (fixture: Fixture): string => `${fixture.bin}:/usr
  * config vars are re-applied afterwards so a developer's global gitconfig
  * cannot influence a fixture either.
  */
-const cleanGitEnv = (): NodeJS.ProcessEnv => {
+export const cleanGitEnv = (): NodeJS.ProcessEnv => {
   // Copied and pruned rather than rebuilt from entries: Next augments
   // `NodeJS.ProcessEnv` with a required `NODE_ENV`, which a freshly-built
   // `Record<string, string>` does not satisfy.
