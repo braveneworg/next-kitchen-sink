@@ -1,7 +1,15 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { parsePct, parseThresholdsFromConfig, refreshMetricsContent } from './coverage-gate';
+import {
+  compareCoverage,
+  effectiveFloor,
+  evaluateMetric,
+  hasImprovement,
+  parsePct,
+  parseThresholdsFromConfig,
+  refreshMetricsContent,
+} from './coverage-gate';
 
 const buildContent = (lastUpdatedLine: string): string =>
   [
@@ -138,13 +146,145 @@ describe('parseThresholdsFromConfig', () => {
   });
 
   // The whole point of the export: a generated project's seeded baseline must
-  // be the same numbers the gate itself enforces.
+  // be the same numbers the gate itself enforces. Asserted as exact values, not
+  // merely positive — a 95→5 typo has to fail here. Raising the bar in
+  // vitest.config.ts is meant to fail this test, so the matching edit to
+  // COVERAGE_METRICS.md's "Minimum" line cannot be forgotten.
   it('agrees with the real vitest.config.ts', () => {
-    const actual = parseThresholdsFromConfig(readFileSync(join(process.cwd(), 'vitest.config.ts'), 'utf-8'));
+    const configPath = join(import.meta.dirname, '..', 'vitest.config.ts');
 
-    expect(actual.statements).toBeGreaterThan(0);
-    expect(actual.branches).toBeGreaterThan(0);
-    expect(actual.functions).toBeGreaterThan(0);
-    expect(actual.lines).toBeGreaterThan(0);
+    expect(parseThresholdsFromConfig(readFileSync(configPath, 'utf-8'))).toEqual({
+      statements: 95,
+      branches: 95,
+      functions: 95,
+      lines: 95,
+    });
+  });
+});
+
+describe('effectiveFloor', () => {
+  // COVERAGE_METRICS.md states the policy as max(baseline - 2, 95). Whichever
+  // bound is higher governs, and it moves with the baseline.
+  it.each([
+    [100, 95, 98],
+    [96, 95, 95],
+    [95, 95, 95],
+    [100, 90, 98],
+    [91, 95, 95],
+  ])('floors a baseline of %s against a threshold of %s at %s', (baseline, threshold, expected) => {
+    expect(effectiveFloor(baseline, threshold)).toBe(expected);
+  });
+});
+
+describe('evaluateMetric', () => {
+  const THRESHOLD = 95;
+
+  // The three worked examples in COVERAGE_METRICS.md, plus the one in
+  // check-coverage-regression.ts's header. Asserting the MESSAGE, not just the
+  // status: the two failure reasons are what an off-by-one silently swaps.
+  it.each([
+    [100, 98.5, '⚠️ OK', /within tolerance/],
+    [97, 95.5, '⚠️ OK', /within tolerance/],
+    [100, 97.5, '❌ FAIL', /exceeds 2% tolerance/],
+    [97, 94.5, '❌ FAIL', /below threshold of 95%/],
+  ])('classifies %s%% → %s%% as %s', (baseline, current, status, message) => {
+    const result = evaluateMetric('statements', baseline, current, THRESHOLD);
+
+    expect({ status, message: result.regression ?? result.toleratedDecrease ?? '' }).toEqual({
+      status: result.status,
+      message: expect.stringMatching(message),
+    });
+  });
+
+  // Boundaries of max(baseline - 2, 95). Inclusive on both bounds.
+  it.each([
+    [100, 98.0, '⚠️ OK'],
+    [100, 97.99, '❌ FAIL'],
+    [96, 95.0, '⚠️ OK'],
+    [96, 94.99, '❌ FAIL'],
+  ])('treats %s%% → %s%% as %s', (baseline, current, status) => {
+    expect(evaluateMetric('statements', baseline, current, THRESHOLD).status).toBe(status);
+  });
+
+  it.each([
+    ['no change', 100, 100],
+    ['an improvement', 100, 100.5],
+    // This gate compares against the BASELINE, not the threshold. A baseline
+    // already under the threshold passes here; Vitest's own coverage.thresholds
+    // is what refuses it, and that runs first in test:coverage:check.
+    ['a baseline already below the threshold', 94, 94],
+  ])('passes %s without a message', (_label, baseline, current) => {
+    expect(evaluateMetric('statements', baseline, current, THRESHOLD)).toEqual({ status: '✅' });
+  });
+
+  it('reports the threshold in preference to the tolerance when both are breached', () => {
+    // Drop of 3 exceeds the tolerance AND lands under the floor. One message.
+    expect(evaluateMetric('lines', 97, 94, THRESHOLD).regression).toMatch(/below threshold of 95%/);
+  });
+
+  // The refactor net: the branch structure is expressed via effectiveFloor, so
+  // pin that it agrees with the original decrease/threshold formulation.
+  it('agrees with the tolerance-and-threshold formulation across a grid', () => {
+    const disagreements: string[] = [];
+
+    for (let baseline = 90; baseline <= 100; baseline += 0.5) {
+      for (let current = 88; current <= 101; current += 0.5) {
+        const passed = evaluateMetric('statements', baseline, current, THRESHOLD).regression === undefined;
+        const expected = current >= baseline || (baseline - current <= 2 && current >= THRESHOLD);
+
+        if (passed !== expected) disagreements.push(`${baseline}→${current}`);
+      }
+    }
+
+    expect(disagreements).toEqual([]);
+  });
+});
+
+describe('compareCoverage', () => {
+  const THRESHOLDS = { statements: 95, branches: 95, functions: 95, lines: 95 };
+  const AT_100 = { statements: 100, branches: 100, functions: 100, lines: 100 };
+
+  it('passes when nothing moved', () => {
+    expect(compareCoverage({ baseline: AT_100, current: AT_100, thresholds: THRESHOLDS }).passed).toBe(true);
+  });
+
+  it('fails when one metric regresses beyond tolerance', () => {
+    const current = { ...AT_100, branches: 97.5 };
+
+    expect(compareCoverage({ baseline: AT_100, current, thresholds: THRESHOLDS }).regressions).toEqual([
+      expect.stringMatching(/^Branches: .*exceeds 2% tolerance/),
+    ]);
+  });
+
+  it('passes a tolerated decrease and still records it', () => {
+    const current = { ...AT_100, lines: 98.5 };
+    const result = compareCoverage({ baseline: AT_100, current, thresholds: THRESHOLDS });
+
+    expect({ passed: result.passed, tolerated: result.toleratedDecreases.length }).toEqual({
+      passed: true,
+      tolerated: 1,
+    });
+  });
+
+  it('reports one row per metric, in a stable order', () => {
+    const rows = compareCoverage({ baseline: AT_100, current: AT_100, thresholds: THRESHOLDS }).rows;
+
+    expect(rows.map((row) => row.metric)).toEqual(['statements', 'branches', 'functions', 'lines']);
+  });
+});
+
+describe('hasImprovement', () => {
+  const AT_100 = { statements: 100, branches: 100, functions: 100, lines: 100 };
+
+  it('is false when every metric is unchanged', () => {
+    expect(hasImprovement(AT_100, AT_100)).toBe(false);
+  });
+
+  it('is true when a single metric rose', () => {
+    expect(hasImprovement({ ...AT_100, branches: 99 }, AT_100)).toBe(true);
+  });
+
+  it('is false when a metric only fell', () => {
+    expect(hasImprovement(AT_100, { ...AT_100, branches: 99 })).toBe(false);
   });
 });
