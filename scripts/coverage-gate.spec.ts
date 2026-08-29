@@ -6,6 +6,7 @@ import {
   effectiveFloor,
   evaluateMetric,
   hasImprovement,
+  parseBaselineMetrics,
   parsePct,
   parseThresholdsFromConfig,
   refreshMetricsContent,
@@ -31,6 +32,24 @@ const buildContent = (lastUpdatedLine: string): string =>
     '| Date       | Statements | Branches | Functions | Lines  | Notes       |',
     '| ---------- | ---------- | -------- | --------- | ------ | ----------- |',
     '| 2026-04-04 | 99.24%     | 96.13%   | 99.67%    | 99.44% | Improvement |',
+  ].join('\n');
+
+/**
+ * The summary table plus a second table of exactly the `| Metric | NN% |`
+ * shape in a later section. Reader and writer must both ignore the decoy.
+ */
+const buildContentWithDecoy = (): string =>
+  [
+    buildContent('**Last Updated:** 2026-07-04'),
+    '',
+    '## Coverage by package',
+    '',
+    '| Metric     | Coverage |',
+    '| ---------- | -------- |',
+    '| Statements | 11.11%   |',
+    '| Branches   | 22.22%   |',
+    '| Functions  | 33.33%   |',
+    '| Lines      | 44.44%   |',
   ].join('\n');
 
 describe('parsePct', () => {
@@ -96,6 +115,74 @@ describe('refreshMetricsContent', () => {
     const result = refreshMetricsContent(buildContent('**Last Updated:** 2026-07-04'), current, '2026-07-11');
 
     expect(result).toContain('| 2026-04-04 | 99.24%     | 96.13%   | 99.67%    | 99.44% | Improvement |');
+  });
+
+  // The writer edits the Current Coverage Summary section, nothing else. A
+  // second table of the same shape elsewhere is somebody else's data.
+  it('leaves a same-shaped table in a later section untouched', () => {
+    const result = refreshMetricsContent(buildContentWithDecoy(), current, '2026-07-11');
+
+    expect(result).toContain('| Statements | 11.11%   |');
+    expect(result).toContain('| Lines      | 44.44%   |');
+  });
+
+  it('returns the whole document, not just the rewritten section', () => {
+    const result = refreshMetricsContent(buildContentWithDecoy(), current, '2026-07-11');
+
+    expect(result).toContain('# Coverage Metrics');
+    expect(result).toContain('## Coverage History');
+    expect(result).toContain('## Coverage by package');
+  });
+
+  it('throws when the summary heading is missing', () => {
+    expect(() => refreshMetricsContent('# Coverage Metrics\n\nNothing here.', current, '2026-07-11')).toThrowError(
+      /## Current Coverage Summary/
+    );
+  });
+});
+
+describe('parseBaselineMetrics', () => {
+  it('reads the four summary percentages', () => {
+    expect(parseBaselineMetrics(buildContent('**Last Updated:** 2026-07-04'))).toEqual({
+      statements: 98.98,
+      branches: 96.01,
+      functions: 99.17,
+      lines: 99.39,
+    });
+  });
+
+  // Reader and writer are anchored to the same section by construction, so
+  // they cannot disagree about which table is the baseline.
+  it('reads the summary table, not a same-shaped table in a later section', () => {
+    expect(parseBaselineMetrics(buildContentWithDecoy())).toEqual({
+      statements: 98.98,
+      branches: 96.01,
+      functions: 99.17,
+      lines: 99.39,
+    });
+  });
+
+  it('throws when the summary heading is missing', () => {
+    expect(() => parseBaselineMetrics('# Coverage Metrics\n\n| Statements | 98.98% |')).toThrowError(
+      /## Current Coverage Summary/
+    );
+  });
+
+  // The anchor is only useful if the real file keeps its shape. Values are not
+  // asserted — the gate rewrites them — but the section must stay reachable.
+  it('reads the real COVERAGE_METRICS.md', () => {
+    const metricsPath = join(import.meta.dirname, '..', 'COVERAGE_METRICS.md');
+    const baseline = parseBaselineMetrics(readFileSync(metricsPath, 'utf-8'));
+
+    expect(Object.values(baseline).every((value) => Number.isFinite(value))).toBe(true);
+  });
+
+  it('throws naming what it did find when a row is absent', () => {
+    const missing = ['## Current Coverage Summary', '', '| Statements | 98.98%   |', '', '## Coverage History'].join(
+      '\n'
+    );
+
+    expect(() => parseBaselineMetrics(missing)).toThrowError(/branches|Could not parse all metrics/i);
   });
 });
 

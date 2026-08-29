@@ -314,20 +314,71 @@ export const parseThresholdsFromConfig = (configContent: string): CoverageMetric
   };
 };
 
+/** The COVERAGE_METRICS.md heading that both the reader and the writer anchor to. */
+const SUMMARY_HEADING = '## Current Coverage Summary';
+
+/** A COVERAGE_METRICS.md document split around its Current Coverage Summary section. */
+interface SummarySplit {
+  /** Everything before the summary heading. */
+  before: string;
+  /** The heading and its body, up to (not including) the next `##` heading. */
+  section: string;
+  /** Everything from the next `##` heading onwards. */
+  after: string;
+}
+
+/**
+ * Split COVERAGE_METRICS.md around its Current Coverage Summary section.
+ *
+ * The section runs from the `## Current Coverage Summary` heading to the next
+ * `## ` heading, or to the end of the document. Both the baseline reader and
+ * the baseline writer work on this slice and nothing else, so they cannot
+ * disagree about which table is the baseline — a second table of the same
+ * `| Metric | NN% |` shape elsewhere in the file is simply out of scope. The
+ * `**Last Updated:**` line lives inside this section, so the writer's date
+ * stamp is in scope.
+ *
+ * @param content The full text of COVERAGE_METRICS.md.
+ * @returns The document in three parts.
+ * @throws If the summary heading is absent.
+ */
+const splitSummarySection = (content: string): SummarySplit => {
+  const headingMatch = content.match(/^##[^\S\n]+Current Coverage Summary[^\S\n]*$/m);
+
+  if (!headingMatch || headingMatch.index === undefined) {
+    throw new Error(`Could not find the "${SUMMARY_HEADING}" heading in COVERAGE_METRICS.md`);
+  }
+
+  const bodyStart = headingMatch.index + headingMatch[0].length;
+  // `##` only — a `###` subheading stays inside the section.
+  const nextHeadingMatch = content.slice(bodyStart).match(/^##[^\S\n#]/m);
+  const sectionEnd = nextHeadingMatch?.index === undefined ? content.length : bodyStart + nextHeadingMatch.index;
+
+  return {
+    before: content.slice(0, headingMatch.index),
+    section: content.slice(headingMatch.index, sectionEnd),
+    after: content.slice(sectionEnd),
+  };
+};
+
 /**
  * Parse the baseline percentages out of COVERAGE_METRICS.md.
  *
+ * Only the Current Coverage Summary section is read — see
+ * `splitSummarySection`.
+ *
  * @param metricsContent The full text of COVERAGE_METRICS.md.
  * @returns The baseline metrics.
- * @throws If any of the four rows is missing.
+ * @throws If the summary heading or any of the four rows is missing.
  */
 export const parseBaselineMetrics = (metricsContent: string): CoverageMetrics => {
   // Format: | Statements | 98.47%   |
   const metricsRegex = /\|\s*(Statements|Branches|Functions|Lines)\s*\|\s*(\d+\.?\d*)%\s*\|/gi;
   const metrics = new Map<keyof CoverageMetrics, number>();
+  const { section } = splitSummarySection(metricsContent);
 
   let match;
-  while ((match = metricsRegex.exec(metricsContent)) !== null) {
+  while ((match = metricsRegex.exec(section)) !== null) {
     const metricName = match[1].toLowerCase() as keyof CoverageMetrics;
     metrics.set(metricName, parseFloat(match[2]));
   }
@@ -571,13 +622,24 @@ export const formatComparison = (comparison: CoverageComparison): readonly Repor
 ];
 
 /**
- * Rewrite the Current Coverage Summary percentages and the Last Updated date
- * in the metrics file content. Only the first occurrence of each metric row is
- * replaced, which is the summary table; Coverage History rows are never touched
- * (their cells don't follow a metric label).
+ * Rewrite the Current Coverage Summary percentages and the Last Updated date,
+ * returning the whole document with only that section changed.
+ *
+ * Scoped to the same slice `parseBaselineMetrics` reads, so the writer can
+ * never target a different table than the reader — see `splitSummarySection`.
+ * Coverage History rows survive on two counts: they sit in a later section,
+ * and their cells don't follow a metric label.
+ *
+ * @param content The full text of COVERAGE_METRICS.md.
+ * @param current The percentages to write in.
+ * @param today ISO date (YYYY-MM-DD) to stamp on the Last Updated line.
+ * @returns The full document, with the summary section rewritten.
+ * @throws If the summary heading is absent.
  */
-export const refreshMetricsContent = (content: string, current: CoverageMetrics, today: string): string =>
-  content
+export const refreshMetricsContent = (content: string, current: CoverageMetrics, today: string): string => {
+  const { before, section, after } = splitSummarySection(content);
+
+  const refreshed = section
     .replace(/(\|\s*Statements\s*\|\s*)\d+\.?\d*%/, `$1${current.statements.toFixed(2)}%`)
     .replace(/(\|\s*Branches\s*\|\s*)\d+\.?\d*%/, `$1${current.branches.toFixed(2)}%`)
     .replace(/(\|\s*Functions\s*\|\s*)\d+\.?\d*%/, `$1${current.functions.toFixed(2)}%`)
@@ -586,3 +648,6 @@ export const refreshMetricsContent = (content: string, current: CoverageMetrics,
     // previous "July 4, 2026"-style pattern silently skipped them, leaving
     // stale dates behind refreshed percentages.
     .replace(/\*\*Last Updated:\*\*.*$/m, `**Last Updated:** ${today}`);
+
+  return `${before}${refreshed}${after}`;
+};

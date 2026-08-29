@@ -15,9 +15,12 @@ Tracks test coverage for this template.
 
 > This table is the regression baseline — `scripts/check-coverage-regression.ts`
 > parses it, and `refreshMetricsContent` rewrites these four percentages plus the
-> date. It is the **only** table in this file whose rows may take the shape
-> `| Metric | NN% |`: the parser's regex is global and last-match-wins, so
-> another table in that shape would silently become the baseline.
+> date. Both are anchored to this section: they read and write only the text
+> between the `## Current Coverage Summary` heading and the next `##` heading, so
+> a table of the same `| Metric | NN% |` shape elsewhere in the file is out of
+> scope for both. Keep the heading and the `**Last Updated:**` line where they
+> are — moving either out of this section breaks the anchor, and the gate throws
+> rather than guessing.
 
 ---
 
