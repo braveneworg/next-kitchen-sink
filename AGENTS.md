@@ -1,6 +1,6 @@
 # Agent & Contributor Guidelines
 
-Last updated: 2026-08-16
+Last updated: 2026-10-10
 
 <!-- BEGIN:nextjs-agent-rules -->
 
@@ -83,7 +83,7 @@ before continuing, so it never happens again.
 
 Versions track `package.json` — update this block when they change.
 
-- TypeScript 7 (strict), Node 24 (from `.nvmrc`, never global), pnpm 11 —
+- TypeScript 7 (strict), Node 24 (from `.nvmrc`, never global), pnpm 12 —
   `pnpm exec` for CLI tools (`tsx`, `oxlint`, `vitest`, …).
 - Next.js 16 (App Router, Turbopack dev, webpack build), React 19.
 - shadcn/ui (Radix), Tailwind v4, lucide-react, RHF 7 + Zod 4;

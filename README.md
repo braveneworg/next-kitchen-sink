@@ -56,7 +56,7 @@ Also included and ready to use: `recharts` (charts), `embla-carousel-react` (car
 | Requirement  | Version   | Notes                                                                                                                              |
 | ------------ | --------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | **Node.js**  | `24.18.0` | Pinned in `.nvmrc` and enforced by `engines`. Use a version manager (`nvm use`), not a global install.                             |
-| **pnpm**     | `11.22.0` | Pinned via `packageManager`. Enable with `corepack enable`.                                                                        |
+| **pnpm**     | `12.10.1` | Pinned via `packageManager`. Enable with `corepack enable`.                                                                        |
 | **gitleaks** | any       | _Optional but recommended._ The pre-commit hook scans staged changes for secrets and warns (does not fail) if gitleaks is missing. |
 
 ## Getting started
