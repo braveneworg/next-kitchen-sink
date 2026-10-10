@@ -1,5 +1,20 @@
 packages:
   - '.'
+# Keeps `pnpm-lock.yaml` a single YAML document, which GitHub's dependency graph
+# — and therefore Dependabot — needs in order to see this project's
+# dependencies at all.
+#
+# Without it, pnpm 12 records the package manager it resolved in a second
+# document written FIRST. A single-document reader takes that one, finds only
+# pnpm and its platform binaries, and reports no dependencies; nothing errors.
+#
+# The cost: pnpm no longer downloads or enforces the `packageManager` version
+# itself. corepack still does, which is the setup the README documents. With
+# another version manager (mise, asdf, Volta), that tool decides which pnpm
+# runs. `scripts/lockfile-shape.spec.ts` fails if this is removed and the
+# lockfile regenerated.
+# See docs/lessons/tooling/pnpm-12-env-lockfile-blinds-dependabot.md.
+pmOnFail: ignore
 allowBuilds:
   # esbuild ships a platform-specific native binary that its postinstall links;
   # tsx (used by test:coverage:check) fails to start without it.
