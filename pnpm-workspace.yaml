@@ -9,9 +9,9 @@ packages:
 # pnpm and its platform binaries, and reports no dependencies; nothing errors.
 #
 # The cost: pnpm no longer downloads or enforces the `packageManager` version
-# itself. corepack still does, which is the setup the README documents. With
-# another version manager (mise, asdf, Volta), that tool decides which pnpm
-# runs. `scripts/lockfile-shape.spec.ts` fails if this is removed and the
+# itself. `mise.toml` pins the pnpm that runs, which is the setup the README
+# documents; corepack still honours `packageManager` for anyone using it
+# instead. `scripts/lockfile-shape.spec.ts` fails if this is removed and the
 # lockfile regenerated.
 # See docs/lessons/tooling/pnpm-12-env-lockfile-blinds-dependabot.md.
 pmOnFail: ignore
