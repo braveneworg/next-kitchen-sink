@@ -4,7 +4,7 @@
   "description": "A starter template for Next.js applications with React, TypeScript, Tailwind CSS, TanStack Query, and other essential tools.",
   "type": "module",
   "engines": {
-    "node": "^24.18.0"
+    "node": "^24.21.0"
   },
   "keywords": [
     "starter",
