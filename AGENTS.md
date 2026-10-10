@@ -153,6 +153,12 @@ pnpm run format               # Prettier write (format:check = no write)
   rejects WIP/`fixup!` commits, then runs the full gate — `pnpm run typecheck`,
   `lint`, `format:check`, and `test:coverage:check`; **commit-msg** runs
   commitlint; **post-merge** reinstalls deps when the lockfile moved.
+- pre-push judges a push by the ref lines git sends it, not by proxies. The
+  gate runs for every push that carries commits — there is no "nothing
+  relevant changed" shortcut, because no file type is provably inert. `main`
+  is protected by the remote ref name as well as by the checked-out branch,
+  and a delete-only push is exempt from everything except that protection.
+  See `docs/lessons/tooling/pre-push-judged-the-push-by-proxies.md`.
 - Shared hook machinery lives in `.husky/lib.sh`, sourced by all four hooks.
   Add a gate with `run_gate <label> <remedy> <cmd…>` rather than a fresh
   `if ! …; then echo; exit 1; fi` block, and give any multi-outcome helper
