@@ -3,14 +3,17 @@ import * as path from 'node:path';
 import {
   cleanupFixture,
   commit,
+  commitFile,
   createFixture,
   createRef,
+  deleteRef,
   type Fixture,
   git,
   type HookResult,
   readPnpmLog,
   runHook,
   updateRef,
+  updateRefAs,
 } from './husky-test-utils';
 
 /**
@@ -30,6 +33,12 @@ const runPrePush = (fixture: Fixture, stdin: string): Promise<HookResult> =>
     hook: 'pre-push',
     stdin,
   });
+
+/** Every `pnpm` invocation the full gate makes, in the order it makes them. */
+const FULL_GATE: readonly string[] = ['run typecheck', 'run lint', 'run format:check', 'run test:coverage:check'];
+
+/** The stubbed `pnpm`'s invocations, one per element. Empty when it never ran. */
+const pnpmCalls = (fixture: Fixture): string[] => readPnpmLog(fixture).split('\n').filter(Boolean);
 
 describe('pre-push hook', () => {
   let fixture: Fixture;
@@ -106,6 +115,119 @@ describe('pre-push hook', () => {
 
       expect(result.code).toBe(1);
       expect(result.log).toMatch(/Pushing directly to this branch is not allowed/);
+    });
+
+    // The check used to ask only "which branch is checked out?". git pushes
+    // whatever the refspec names, so `git push origin feat/thing:main` updated
+    // main from a branch that was never main, and nothing objected.
+    it('blocks a push that updates main from a feature branch by refspec', async () => {
+      git(fixture.local, 'push', 'origin', 'main');
+      const remoteSha = git(fixture.local, 'rev-parse', 'HEAD');
+      git(fixture.local, 'checkout', '-b', 'feat/thing');
+      const sha = commit(fixture.local, 'feat: a thing');
+
+      const result = await runPrePush(fixture, updateRefAs('feat/thing', sha, 'main', remoteSha));
+
+      expect(result.code).toBe(1);
+      expect(result.log).toMatch(/This push updates 'main' on 'origin'/);
+    });
+
+    // The seeding exception is about the remote, not about which local branch
+    // carries the first commit, so it has to survive the refspec form too.
+    it('allows a refspec push that seeds main on a remote with no refs at all', async () => {
+      git(fixture.local, 'checkout', '-b', 'feat/thing');
+      const sha = git(fixture.local, 'rev-parse', 'HEAD');
+
+      const result = await runPrePush(fixture, updateRefAs('feat/thing', sha, 'main', '0'.repeat(40)));
+
+      expect(result.code).toBe(0);
+      expect(result.log).toMatch(/has no refs at all/);
+    });
+  });
+
+  // A deletion carries no commits, so there is no tree to type-check, lint or
+  // test — and none of the checks below can say anything about it. The hook used
+  // to run them anyway against whatever happened to be checked out, which from
+  // `main` meant refusing outright: tidying up a merged branch was impossible
+  // without first switching to some other branch.
+  describe('ref deletion', () => {
+    /** Push main and a feature branch, leaving the feature branch checked out. */
+    const pushFeatureBranch = (): string => {
+      git(fixture.local, 'push', 'origin', 'main');
+      git(fixture.local, 'checkout', '-b', 'feat/gone');
+      const sha = commit(fixture.local, 'feat: soon to be merged');
+      git(fixture.local, 'push', 'origin', 'feat/gone');
+      return sha;
+    };
+
+    it('allows deleting a feature branch while main is checked out', async () => {
+      const remoteSha = pushFeatureBranch();
+      git(fixture.local, 'checkout', 'main');
+
+      const result = await runPrePush(fixture, deleteRef('feat/gone', remoteSha));
+
+      expect(result.code).toBe(0);
+      expect(result.log).toMatch(/Only deleting/);
+    });
+
+    it('runs no gate for a push that only deletes', async () => {
+      const remoteSha = pushFeatureBranch();
+
+      const result = await runPrePush(fixture, deleteRef('feat/gone', remoteSha));
+
+      expect({ code: result.code, pnpm: pnpmCalls(fixture) }).toEqual({ code: 0, pnpm: [] });
+    });
+
+    // Skipping the checks for a deletion must not become a way to remove the
+    // branch the checks exist to protect.
+    it.each([['main'], ['feat/gone']])('refuses to delete main while %s is checked out', async (checkedOut) => {
+      pushFeatureBranch();
+      git(fixture.local, 'checkout', checkedOut);
+      const mainSha = git(fixture.local, 'rev-parse', 'main');
+
+      const result = await runPrePush(fixture, deleteRef('main', mainSha));
+
+      expect(result.code).toBe(1);
+      expect(result.log).toMatch(/Deleting 'main' on 'origin' is not allowed/);
+    });
+
+    // Only a push made of deletions and nothing else is exempt. One that also
+    // carries commits is an ordinary push with a deletion attached.
+    it('still runs the full gate when a push deletes one branch and updates another', async () => {
+      const remoteSha = pushFeatureBranch();
+      git(fixture.local, 'checkout', '-b', 'feat/next', 'main');
+      const sha = commit(fixture.local, 'feat: the next thing');
+
+      const result = await runPrePush(fixture, deleteRef('feat/gone', remoteSha) + createRef('feat/next', sha));
+
+      expect({ code: result.code, pnpm: pnpmCalls(fixture) }).toEqual({ code: 0, pnpm: FULL_GATE });
+    });
+  });
+
+  // The hook used to run the gate only when a `.ts` or `.tsx` file differed from
+  // the baseline. Every other file was assumed to be inert, and almost none
+  // are: the lockfile decides what the compiler and the tests resolve, the
+  // coverage gate parses COVERAGE_METRICS.md, Prettier checks Markdown and JSON,
+  // and the hook specs execute `.husky/*`. A dependency bump — the change most
+  // likely to break types or tests without touching a line of source — was
+  // pushed with nothing run at all.
+  describe('gate selection', () => {
+    it.each([
+      ['pnpm-lock.yaml'],
+      ['package.json'],
+      ['pnpm-workspace.yaml'],
+      ['COVERAGE_METRICS.md'],
+      ['.husky/pre-push'],
+      ['src/app/globals.css'],
+      ['src/lib/thing.ts'],
+    ])('runs the full gate when only %s changed', async (file) => {
+      git(fixture.local, 'push', 'origin', 'main');
+      git(fixture.local, 'checkout', '-b', 'feat/thing');
+      const sha = commitFile(fixture.local, file, 'chore: change one file');
+
+      const result = await runPrePush(fixture, createRef('feat/thing', sha));
+
+      expect({ code: result.code, pnpm: pnpmCalls(fixture) }).toEqual({ code: 0, pnpm: FULL_GATE });
     });
   });
 
@@ -196,11 +318,8 @@ describe('pre-push hook', () => {
   // so none of these four branches had ever been executed — the same "only ever
   // observed passing" state that hid the tsc-files bug for months.
   describe('gate failures', () => {
-    // Deliberately leaves the remote unseeded. With no baseline to diff
-    // against, the hook runs the full gate rather than taking the
-    // "no TypeScript changed" shortcut — which is what these tests need to
-    // reach. Pushing main first would give it a baseline, and the fixture's
-    // commits touch no .ts files, so every gate would be skipped.
+    // Leaves the remote unseeded, which is the shortest route to the gate: with
+    // no `origin/main` there is no up-to-date check to satisfy first.
     const seedFeatureBranch = (): string => {
       git(fixture.local, 'checkout', '-b', 'feat/thing');
       return commit(fixture.local, 'feat: a thing');

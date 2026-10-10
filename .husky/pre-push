@@ -51,12 +51,39 @@ exec </dev/null
 
 force_push=0
 pushed_refs=0
+deleted_refs=0
 updates_existing_ref=0
+# Names, not flags: the refusals below quote the branch back to the user.
+pushed_protected=""
+deleted_protected=""
 if [ -n "$push_refs" ]; then
   # Heredoc (not a pipe) so the loop runs in THIS shell and force_push sticks.
-  while read -r _local_ref local_sha _remote_ref remote_sha; do
-    case "$local_sha" in *[!0]*) : ;; *) continue ;; esac   # skip deletions
+  while read -r _local_ref local_sha remote_ref remote_sha; do
+    # Only branches can be protected. A tag that happens to be called `main`
+    # leaves this empty, and `is_protected_branch ""` is false.
+    remote_branch=""
+    case "$remote_ref" in refs/heads/*) remote_branch=${remote_ref#refs/heads/} ;; esac
+
+    # An all-zero local sha is a deletion: git sends `(delete)` as the local ref
+    # and there is no commit on this side at all.
+    case "$local_sha" in
+      *[!0]*) : ;;
+      *)
+        deleted_refs=$((deleted_refs + 1))
+        if is_protected_branch "$remote_branch"; then
+          deleted_protected="$remote_branch"
+        fi
+        continue
+        ;;
+    esac
+
     pushed_refs=$((pushed_refs + 1))
+    # Judged by the REMOTE name. `git push origin feat/x:main` updates main
+    # while a feature branch is checked out, so asking only "which branch am I
+    # on?" — as this hook did — let that through.
+    if is_protected_branch "$remote_branch"; then
+      pushed_protected="$remote_branch"
+    fi
     case "$remote_sha" in *[!0]*) : ;; *) continue ;; esac  # skip new branches
     updates_existing_ref=1
     if ! git merge-base --is-ancestor "$remote_sha" "$local_sha" 2>/dev/null; then
@@ -144,6 +171,23 @@ echo "===== pre-push hook started at $(date) ====="
 # class docs/lessons/git-workflow/pre-push-deadlocked-a-fresh-remote.md names.
 # They answer in named tokens now, which cannot be transposed.
 
+# A push made only of deletions carries no commits: there is no tree to
+# type-check, lint or test, and "is this branch behind?" has no branch to ask
+# about. Nothing below can say anything useful, and from main the branch check
+# would refuse outright — which made tidying up a merged branch impossible
+# without first checking out some other branch.
+#
+# Settled before branch protection for that reason, and the protected-branch
+# refusal comes first so the exemption cannot be used to delete main.
+stage="ref deletion"
+if [ -n "$deleted_protected" ]; then
+  refuse "Deleting '$deleted_protected' on '$push_remote' is not allowed."
+fi
+if [ "$deleted_refs" -gt 0 ] && [ "$pushed_refs" = "0" ]; then
+  echo "🗑️  Only deleting refs on '$push_remote' — no commits are being pushed, so there is nothing to check."
+  exit 0
+fi
+
 # Prevent pushing directly to main or master branches. The one exception is
 # seeding an *entirely unseeded* remote, which would otherwise have no legal
 # first push at all: refusing every push from main, while every other branch is
@@ -155,6 +199,17 @@ echo "===== pre-push hook started at $(date) ====="
 # so the remote itself is inspected. That check is gated behind $seeding_push
 # (which is free) so an ordinary accidental push to main is still rejected
 # without paying for a network round trip.
+#
+# Two independent questions decide whether this is a push to a protected branch,
+# and either one is enough:
+#
+#   - Is a protected branch checked out? Everything below — the commit count,
+#     the WIP scan, the gate — measures HEAD, so a push made from main is
+#     treated as a push of main whatever the refspec says. That is deliberately
+#     strict: allowing `git push origin feat/x` from main would gate main's tree
+#     and send feat/x's commits unexamined.
+#   - Does a ref line name a protected branch on the remote? That catches
+#     `git push origin feat/x:main`, which the first question cannot see.
 stage="branch protection"
 # `current_branch`, not `git rev-parse --abbrev-ref HEAD`. The comment at
 # .husky/pre-commit:11-15 spells out why rev-parse is wrong here — it exits 128
@@ -162,7 +217,13 @@ stage="branch protection"
 # forbids. The library keeps rev-parse only as a fallback, so a detached HEAD
 # still reports "HEAD" and the messages below read the same.
 branch_name=$(current_branch)
+protected_refusal=""
 if is_protected_branch "$branch_name"; then
+  protected_refusal="You are on the '$branch_name' branch. Pushing directly to this branch is not allowed."
+elif [ -n "$pushed_protected" ]; then
+  protected_refusal="This push updates '$pushed_protected' on '$push_remote'. Pushing directly to this branch is not allowed."
+fi
+if [ -n "$protected_refusal" ]; then
   seeding_allowed=0
   if [ "$seeding_push" = "1" ]; then
     # The `*)` arm is deliberately the strict one: a token this hook does not
@@ -182,7 +243,7 @@ if is_protected_branch "$branch_name"; then
   if [ "$seeding_allowed" = "1" ]; then
     echo "🌱 '$push_remote' has no refs at all — allowing this push to seed it."
   else
-    refuse "You are on the '$branch_name' branch. Pushing directly to this branch is not allowed."
+    refuse "$protected_refusal"
   fi
 fi
 
@@ -255,8 +316,8 @@ case "$fetch_state" in
   absent)
     # The remote is reachable but has no such branch — an empty repository, or
     # one whose main has yet to be seeded. There is no baseline to measure this
-    # push against, so the sync comparisons are skipped below and the full gate
-    # runs in place of the changed-files shortcut.
+    # push against, so the sync comparisons are skipped below. The gate itself
+    # runs regardless, as it does for every push that carries commits.
     no_baseline=1
     info "'$sync_ref' does not exist on '$sync_remote' yet — nothing to compare against."
     ;;
@@ -309,26 +370,23 @@ elif ! git merge-base --is-ancestor "$sync_ref" HEAD; then
   fi
 fi
 
-# Diff base for change detection is the same ref we just synced against.
-diff_base="$sync_ref"
-
-# Check if any .ts or .tsx files changed compared to the diff base
-TS_CHANGED=$(git diff --name-only "$diff_base"..HEAD -- '*.ts' '*.tsx' 2>/dev/null | head -1)
-
-# A force push rewrites history, so always run the full gate (type-check, lint,
-# format, tests) regardless of which files appear changed vs the stale upstream.
-# A push with no baseline has nothing to diff against at all, so the skip would
-# silently wave through every file. Only the fast-forward path keeps the
-# "no .ts/.tsx changed" skip optimization.
-if [ "$no_baseline" = "1" ]; then
-  echo "🛡️  No baseline to diff against — running the full gate (type-check, lint, format, tests)."
-elif [ "$force_push" = "1" ]; then
-  echo "🛡️  Force push detected — running the full gate (type-check, lint, format, tests)."
-elif [ -z "$TS_CHANGED" ]; then
-  echo "📦 No .ts or .tsx files changed — skipping type-check, lint, format, and tests."
-  echo "🚀 Pushing changes..."
-  exit 0
-fi
+# Every push that reaches this point runs the full gate. There is deliberately
+# no "nothing relevant changed" shortcut.
+#
+# There used to be one: the gate was skipped unless a `.ts` or `.tsx` file
+# differed from the sync ref. It assumed every other file was inert, and almost
+# none are. `pnpm-lock.yaml` and `package.json` decide what the compiler and the
+# tests resolve; the coverage gate parses COVERAGE_METRICS.md; Prettier checks
+# Markdown, JSON and CSS; the hook specs execute `.husky/*`. A dependency bump —
+# the change most likely to break types or tests without touching a line of
+# source — was pushed with nothing run at all, under a message that read like a
+# considered decision.
+#
+# No narrower rule replaces it, because a list of "files no gate reads" is a
+# claim about every test and tool in the repository that nothing verifies and
+# that goes stale silently. Pushes that have nothing to check are already
+# settled above: a delete-only push, and a branch with no commits ahead.
+# See docs/lessons/tooling/pre-push-judged-the-push-by-proxies.md.
 
 # Each gate is announced, run and judged by `run_gate` (see .husky/lib.sh).
 # These four blocks were previously 14 near-identical lines apiece, and the only
