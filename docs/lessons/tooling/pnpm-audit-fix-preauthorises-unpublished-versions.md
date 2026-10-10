@@ -38,6 +38,16 @@ The other package, `brace-expansion`, did have a fix (5.0.12, inside
 brace-expansion` nor `pnpm audit --fix update` would move the lockfile off
 5.0.9. Both answered `Already up to date`. The cause was not established.
 
+Re-running the command after the move to pnpm 12.10.1 (2026-10-10) failed
+differently. It no longer wrote the exclusion, and it again fixed nothing, but
+this time it bumped direct dependencies that had no advisory against them —
+`oxlint` 1.78.0 → 1.87.0, `prettier`, `tsx`, `lint-staged`, `@base-ui/react`,
+`@tanstack/react-query` and others — rewriting `package.json` and the lockfile
+and installing the result. Restoring the two files is not enough:
+`node_modules` still holds the bumped versions until
+`pnpm install --frozen-lockfile` puts it back, and a gate run before that
+passes or fails against a tree nobody committed.
+
 ## Why it matters
 
 `minimumReleaseAge` exists to keep a freshly published — possibly hijacked —
@@ -52,9 +62,12 @@ Committing that line would have looked like part of the remediation.
 - An empty Dependabot alert list is not evidence of a clean tree. Cross-check
   with `pnpm audit`, and if the two disagree, check that the dependency graph
   is populated before trusting either.
-- Diff `pnpm-workspace.yaml` after every `pnpm audit --fix` run, including runs
-  that report nothing fixed. Revert any `minimumReleaseAgeExclude` entry whose
-  version `pnpm view <pkg> versions` does not list.
+- Diff `pnpm-workspace.yaml`, `package.json` and `pnpm-lock.yaml` after every
+  `pnpm audit --fix` run, including runs that report nothing fixed. Revert any
+  `minimumReleaseAgeExclude` entry whose version `pnpm view <pkg> versions`
+  does not list, and any bump to a package the audit did not name.
+- After reverting, run `pnpm install --frozen-lockfile` before any gate, so
+  `node_modules` matches the lockfile again.
 - Before treating a finding as fixable, confirm the patched version exists.
   The advisory's own `firstPatchedVersion` is the authority, not the range
   `pnpm audit` prints.
