@@ -88,6 +88,12 @@ Versions track `package.json` — update this block when they change.
 - Next.js 16 (App Router, Turbopack dev, webpack build), React 19.
 - shadcn/ui (Radix), Tailwind v4, lucide-react, RHF 7 + Zod 4;
   TanStack Query 5; Vitest 4
+- `shadcn` itself is **not** a dependency and must not become one. Add
+  components with `pnpm dlx shadcn@latest add <component>`; its Tailwind
+  stylesheet is vendored at `src/app/shadcn.css`. The package is the CLI, and
+  installing it for one CSS file pulled in ~220 packages — the only route to
+  7 of the 16 vulnerable packages in the 2026-10 audit, one of them unfixable.
+  Never run `shadcn init` here.
 - oxlint 1 (`.oxlintrc.json`), not ESLint — typescript-eslint hard-throws on
   TypeScript 7, so the whole ESLint stack is incompatible with this repo's
   compiler. oxlint parses TS natively in Rust and has no `typescript` peer.

@@ -167,6 +167,12 @@ pnpm dlx shadcn@latest add <component>
 Components land in `src/components/ui` per `components.json`. The template ships the full primitive set already, so
 check there before adding anything.
 
+`shadcn` is deliberately not a dependency. The CLI runs on demand through `pnpm dlx`, and the one file the app needs
+from the package — its Tailwind stylesheet — is vendored as [`src/app/shadcn.css`](src/app/shadcn.css). Installing the
+package for that file would add the CLI's whole dependency tree, about 220 packages, to every project created from this
+template. The header of that file says which release it mirrors and how to refresh it. Avoid `shadcn init`: it re-adds
+the dependency and rewrites the import, and `scripts/shadcn-stylesheet.spec.ts` will fail until both are undone.
+
 ## Conventions
 
 - **Commits** follow [Conventional Commits](https://www.conventionalcommits.org) with a gitmoji:
