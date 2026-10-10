@@ -83,8 +83,11 @@ before continuing, so it never happens again.
 
 Versions track `package.json` — update this block when they change.
 
-- TypeScript 7 (strict), Node 24 (from `.nvmrc`, never global), pnpm 12 —
-  `pnpm exec` for CLI tools (`tsx`, `oxlint`, `vitest`, …).
+- TypeScript 7 (strict), Node 24 and pnpm 12 — both pinned in `mise.toml`,
+  never global; `mise install` provides them. `pnpm exec` for CLI tools
+  (`tsx`, `oxlint`, `vitest`, …). `packageManager` and `engines.node` in
+  `package.json` must match `mise.toml`; `scripts/toolchain-pins.spec.ts`
+  fails when they drift. There is no `.nvmrc`.
 - Next.js 16 (App Router, Turbopack dev, webpack build), React 19.
 - shadcn/ui (Radix), Tailwind v4, lucide-react, RHF 7 + Zod 4;
   TanStack Query 5; Vitest 4

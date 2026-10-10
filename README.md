@@ -53,29 +53,30 @@ Also included and ready to use: `recharts` (charts), `embla-carousel-react` (car
 
 ## Requirements
 
-| Requirement  | Version   | Notes                                                                                                                                                                                                      |
-| ------------ | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Node.js**  | `24.18.0` | Pinned in `.nvmrc` and enforced by `engines`. Use a version manager (`nvm use`), not a global install.                                                                                                     |
-| **pnpm**     | `12.10.1` | Pinned via `packageManager`. Enable with `corepack enable` — pnpm does not enforce the pin itself (`pmOnFail: ignore`, see `pnpm-workspace.yaml`), so with mise, asdf or Volta install this version there. |
-| **gitleaks** | any       | _Optional but recommended._ The pre-commit hook scans staged changes for secrets and warns (does not fail) if gitleaks is missing.                                                                         |
+| Requirement  | Version   | Notes                                                                                                                                              |
+| ------------ | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **mise**     | any       | Installs the two below. See [mise.jdx.dev](https://mise.jdx.dev/getting-started.html).                                                             |
+| **Node.js**  | `24.21.0` | Pinned in `mise.toml`. `engines.node` records the same floor but pnpm does not enforce it, so use mise, not a global install.                      |
+| **pnpm**     | `12.10.1` | Pinned in `mise.toml`, and in `packageManager` for corepack. pnpm does not enforce the pin itself (`pmOnFail: ignore`, see `pnpm-workspace.yaml`). |
+| **gitleaks** | any       | _Optional but recommended._ The pre-commit hook scans staged changes for secrets and warns (does not fail) if gitleaks is missing.                 |
 
 ## Getting started
 
 ```bash
-# 1. Use the pinned Node version
-nvm install && nvm use
+# 1. Install the pinned Node and pnpm (both come from mise.toml)
+mise install
 
-# 2. Enable pnpm via corepack (matches the pinned packageManager)
-corepack enable
-
-# 3. Install dependencies — this also installs Husky hooks via `prepare`
+# 2. Install dependencies — this also installs Husky hooks via `prepare`
 pnpm install
 
-# 4. Start the dev server
+# 3. Start the dev server
 pnpm run dev
 ```
 
 The app runs at [http://localhost:3000](http://localhost:3000).
+
+Not using mise? Install the Node version from `mise.toml` yourself and run `corepack enable`, which reads the pnpm
+version from `packageManager`. Nothing will stop you running a different Node, so the pin is yours to keep.
 
 Optional, recommended for the secret-scanning hook:
 
