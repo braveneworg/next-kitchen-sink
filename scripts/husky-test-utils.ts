@@ -82,7 +82,7 @@ export const restrictedPath = (fixture: Fixture): string => `${fixture.bin}:/usr
  * REPOSITORY: `git remote add origin` then fails with "remote origin already
  * exists" because it is talking about this repo, not the fixture.
  *
- * `.husky/pre-push:68-70` unsets the same set for the same reason. The two
+ * `.husky/pre-push` unsets the same set for the same reason. The two
  * config vars are re-applied afterwards so a developer's global gitconfig
  * cannot influence a fixture either.
  */
@@ -118,6 +118,17 @@ export const git = (cwd: string, ...args: readonly string[]): string =>
 export const commit = (cwd: string, subject: string): string => {
   writeFileSync(path.join(cwd, 'file.txt'), `${subject}\n`);
   git(cwd, 'add', 'file.txt');
+  git(cwd, 'commit', '-m', subject);
+  return git(cwd, 'rev-parse', 'HEAD');
+};
+
+/** Commit a change to one named file, creating its directory when needed. */
+export const commitFile = (cwd: string, file: string, subject: string): string => {
+  const target = path.join(cwd, file);
+
+  mkdirSync(path.dirname(target), { recursive: true });
+  writeFileSync(target, `${subject}\n`);
+  git(cwd, 'add', file);
   git(cwd, 'commit', '-m', subject);
   return git(cwd, 'rev-parse', 'HEAD');
 };
@@ -259,3 +270,18 @@ export const createRef = (ref: string, sha: string): string =>
 /** git's stdin line for a push that UPDATES an existing `ref` on the remote. */
 export const updateRef = (ref: string, sha: string, remoteSha: string): string =>
   `refs/heads/${ref} ${sha} refs/heads/${ref} ${remoteSha}\n`;
+
+/**
+ * git's stdin line for a push that DELETES `ref` on the remote. git reports a
+ * deletion with the literal `(delete)` in place of a local ref and an all-zero
+ * local sha — there is no local commit involved.
+ */
+export const deleteRef = (ref: string, remoteSha: string): string =>
+  `(delete) ${ZERO_SHA} refs/heads/${ref} ${remoteSha}\n`;
+
+/**
+ * git's stdin line for a push whose local and remote names differ, as in
+ * `git push origin feat/thing:main`.
+ */
+export const updateRefAs = (localRef: string, sha: string, remoteRef: string, remoteSha: string): string =>
+  `refs/heads/${localRef} ${sha} refs/heads/${remoteRef} ${remoteSha}\n`;
