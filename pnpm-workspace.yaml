@@ -5,14 +5,3 @@ allowBuilds:
   # tsx (used by test:coverage:check) fails to start without it.
   esbuild: true
   unrs-resolver: true
-auditConfig:
-  ignoreGhsas:
-    # braces <=3.0.3: stack exhaustion on deeply nested brace patterns. Accepted,
-    # not fixed — no patched release exists and the maintainer disputes the
-    # advisory. braces is reached only through the shadcn CLI
-    # (fast-glob → micromatch); the app's sole import from shadcn is
-    # `shadcn/tailwind.css`, so no braces code ships or runs outside a
-    # developer invoking that CLI with their own globs. Remove this entry when
-    # `pnpm view braces version` reports anything newer than 3.0.3, or when
-    # `pnpm why braces` comes back empty.
-    - GHSA-vfj7-8cjw-p6xm
