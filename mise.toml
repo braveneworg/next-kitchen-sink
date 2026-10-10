@@ -1,0 +1,14 @@
+# The one place this project's Node and pnpm versions are pinned.
+# Run `mise install` (https://mise.jdx.dev) to get both.
+#
+# Two fields in package.json must agree with these, because other tools read
+# them: `packageManager` (corepack) and `engines.node` (deployment platforms;
+# pnpm checks it only under `engineStrict`, which is not set here).
+# scripts/toolchain-pins.spec.ts fails if any of the three drift apart.
+#
+# pnpm does not enforce its own version here — `pmOnFail: ignore` in
+# pnpm-workspace.yaml turns that off so GitHub's dependency graph can read the
+# lockfile — so this file is what actually selects the pnpm that runs.
+[tools]
+node = "24.21.0"
+pnpm = "12.10.1"
